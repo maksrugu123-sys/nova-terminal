@@ -38,7 +38,7 @@ int main(void) {
     assert(tokens[6].type == NOVA_TOK_REDIRECT_APPEND);
     assert(tokens[8].type == NOVA_TOK_AND_IF);
     assert(tokens[11].type == NOVA_TOK_OR_IF);
-    assert(tokens[13].type == NOVA_TOK_BACKGROUND);
+    assert(tokens[14].type == NOVA_TOK_BACKGROUND);
 
     n = lex("echo one\\ two", tokens);
     assert(n == 2 && strcmp(tokens[1].text, "one two") == 0);
