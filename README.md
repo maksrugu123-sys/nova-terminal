@@ -41,9 +41,11 @@ make install
 
 ## Planned 0.2.0 work
 
-- Distinct ANSI colors for prompt, paths, help and status/error output.
+- ANSI 256-color interface with selectable `nova`, `matrix`, `sunset`, `ocean` and `mono` palettes.
+- Different colors for directories and files in Tab-completion results.
 - Persistent command history in `~/.nova_history` (Up/Down navigation).
 - Interactive cursor movement, Backspace, Ctrl-C and Ctrl-D.
+- UTF-8 command-line input for non-English text from Android keyboards.
 - Tab completion for filesystem paths.
 - Line-oriented built-in editor (`edit FILE`).
 - Workspace metadata helpers (`workspace init`, `workspace info`).
