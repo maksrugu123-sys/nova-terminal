@@ -541,6 +541,186 @@ static int run_builtin(char **argv) {
 }
 
 
+
+#define NOVA_PIPELINE_LIMIT 16
+
+typedef struct {
+    char *argv[MAX_ARGS];
+    const char *input;
+    const char *output;
+    int append;
+} NovaExecCommand;
+
+static int nova_status_from_wait(int status) {
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+
+static int nova_apply_redirects(const NovaExecCommand *cmd) {
+    int fd;
+    if (cmd->input) {
+        fd = open(cmd->input, O_RDONLY);
+        if (fd < 0) { perror(cmd->input); return 0; }
+        if (dup2(fd, STDIN_FILENO) < 0) { perror("dup2"); close(fd); return 0; }
+        close(fd);
+    }
+    if (cmd->output) {
+        fd = open(cmd->output, O_WRONLY | O_CREAT |
+                  (cmd->append ? O_APPEND : O_TRUNC), 0666);
+        if (fd < 0) { perror(cmd->output); return 0; }
+        if (dup2(fd, STDOUT_FILENO) < 0) { perror("dup2"); close(fd); return 0; }
+        close(fd);
+    }
+    return 1;
+}
+
+static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
+                                 int background, const char *original) {
+    pid_t pids[NOVA_PIPELINE_LIMIT];
+    int previous = -1, result = 0;
+    size_t i;
+    if (count == 0 || count > NOVA_PIPELINE_LIMIT) return 2;
+    if (background && count > 1) {
+        fputs("nova: background pipelines are not supported yet\n", stderr);
+        return 2;
+    }
+
+    if (count == 1 && !background &&
+        cmds[0].input == NULL && cmds[0].output == NULL) {
+        int handled = run_builtin(cmds[0].argv);
+        if (!handled) handled = nova_shell_builtin(cmds[0].argv);
+        if (!handled) handled = nova_process_builtin(cmds[0].argv);
+        if (handled) return 0;
+        return nova_process_run(cmds[0].argv, 0, original);
+    }
+    if (background && count == 1) {
+        if (cmds[0].input || cmds[0].output) {
+            fputs("nova: background redirection is not supported yet\n", stderr);
+            return 2;
+        }
+        return nova_process_run(cmds[0].argv, 1, original);
+    }
+
+    for (i = 0; i < count; i++) {
+        int fds[2] = {-1, -1};
+        pid_t pid;
+        if (i + 1 < count && pipe(fds) != 0) {
+            perror("nova: pipe");
+            if (previous >= 0) close(previous);
+            return 1;
+        }
+        pid = fork();
+        if (pid < 0) {
+            perror("nova: fork");
+            if (previous >= 0) close(previous);
+            if (fds[0] >= 0) close(fds[0]);
+            if (fds[1] >= 0) close(fds[1]);
+            return 1;
+        }
+        if (pid == 0) {
+            if (previous >= 0) { (void)dup2(previous, STDIN_FILENO); close(previous); }
+            if (fds[1] >= 0) { (void)dup2(fds[1], STDOUT_FILENO); close(fds[1]); }
+            if (fds[0] >= 0) close(fds[0]);
+            if (!nova_apply_redirects(&cmds[i])) _exit(1);
+            execvp(cmds[i].argv[0], cmds[i].argv);
+            fprintf(stderr, "nova: %s: %s\n", cmds[i].argv[0], strerror(errno));
+            _exit(errno == ENOENT ? 127 : 126);
+        }
+        pids[i] = pid;
+        if (previous >= 0) close(previous);
+        if (fds[1] >= 0) close(fds[1]);
+        previous = fds[0];
+    }
+    if (previous >= 0) close(previous);
+    for (i = 0; i < count; i++) {
+        int child_status;
+        pid_t waited;
+        do { waited = waitpid(pids[i], &child_status, 0); }
+        while (waited < 0 && errno == EINTR);
+        if (waited < 0) { perror("nova: waitpid"); result = 1; }
+        else if (i + 1 == count) result = nova_status_from_wait(child_status);
+    }
+    return result;
+}
+
+static int execute_line(const char *line, const char *original) {
+    NovaToken tokens[NOVA_TOKEN_LIMIT];
+    NovaExecCommand commands[NOVA_PIPELINE_LIMIT];
+    char error[160];
+    int n = nova_lex(line, tokens, NOVA_TOKEN_LIMIT, error, sizeof(error));
+    int i = 0, status = 0, condition = 0;
+    if (n < 0) { fprintf(stderr, "nova: parse: %s\n", error); return 2; }
+    if (n == 0) return 0;
+
+    while (i < n) {
+        size_t count = 0;
+        int background = 0, skip;
+        for (;;) {
+            NovaExecCommand *cmd;
+            size_t argc = 0;
+            if (count >= NOVA_PIPELINE_LIMIT) {
+                fputs("nova: pipeline is too long\n", stderr); return 2;
+            }
+            cmd = &commands[count++];
+            memset(cmd, 0, sizeof(*cmd));
+            while (i < n && tokens[i].type != NOVA_TOK_PIPE &&
+                   tokens[i].type != NOVA_TOK_AND_IF &&
+                   tokens[i].type != NOVA_TOK_OR_IF &&
+                   tokens[i].type != NOVA_TOK_BACKGROUND) {
+                NovaTokenType type = tokens[i].type;
+                if (type == NOVA_TOK_WORD) {
+                    if (argc + 1 >= MAX_ARGS) {
+                        fputs("nova: too many arguments\n", stderr); return 2;
+                    }
+                    cmd->argv[argc++] = tokens[i++].text;
+                } else if (type == NOVA_TOK_REDIRECT_IN ||
+                           type == NOVA_TOK_REDIRECT_OUT ||
+                           type == NOVA_TOK_REDIRECT_APPEND) {
+                    NovaTokenType redirect = type;
+                    i++;
+                    if (i >= n || tokens[i].type != NOVA_TOK_WORD) {
+                        fputs("nova: redirection requires a file name\n", stderr); return 2;
+                    }
+                    if (redirect == NOVA_TOK_REDIRECT_IN) cmd->input = tokens[i].text;
+                    else {
+                        cmd->output = tokens[i].text;
+                        cmd->append = redirect == NOVA_TOK_REDIRECT_APPEND;
+                    }
+                    i++;
+                } else {
+                    fputs("nova: unexpected token\n", stderr); return 2;
+                }
+            }
+            cmd->argv[argc] = NULL;
+            if (argc == 0) { fputs("nova: empty command\n", stderr); return 2; }
+            if (i < n && tokens[i].type == NOVA_TOK_PIPE) { i++; continue; }
+            break;
+        }
+        if (i < n && tokens[i].type == NOVA_TOK_BACKGROUND) {
+            background = 1;
+            i++;
+            if (i < n) {
+                fputs("nova: '&' must terminate the command line\n", stderr);
+                return 2;
+            }
+        }
+        skip = (condition == 1 && status != 0) ||
+               (condition == 2 && status == 0);
+        if (!skip) status = nova_execute_pipeline(commands, count, background, original);
+        if (i >= n) break;
+        if (tokens[i].type == NOVA_TOK_AND_IF) condition = 1;
+        else if (tokens[i].type == NOVA_TOK_OR_IF) condition = 2;
+        else { fputs("nova: unexpected operator\n", stderr); return 2; }
+        i++;
+        if (i >= n) {
+            fputs("nova: missing command after conditional operator\n", stderr);
+            return 2;
+        }
+    }
+    return status;
+}
+
 int main(void) {
     char line[LINE_MAX_SIZE];
     const char *no_color = getenv("NO_COLOR");
