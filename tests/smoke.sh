@@ -19,4 +19,5 @@ printf '%s\n' "$output" | grep -F 'works' >/dev/null
 printf '%s\n' "$output" | grep -F 'hello' >/dev/null
 printf '%s\n' "$output" | grep -F '[1]' >/dev/null
 
+printf '%s\n' "$output"
 echo "NOVA smoke tests passed."
