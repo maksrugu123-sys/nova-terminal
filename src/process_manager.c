@@ -18,6 +18,7 @@
 typedef struct {
     int used;
     int done;
+    int stopped;
     unsigned int id;
     pid_t pid;
     int status;
@@ -163,6 +164,53 @@ int nova_process_builtin(char **argv) {
             return result;
         }
     }
+    if (strcmp(argv[0], "fg") == 0) {
+        if (argv[1] == NULL || !parse_positive(argv[1], &number) || number > 2147483647L) {
+            fputs("Usage: fg JOB_ID (stopped foreground jobs only)\\n", stderr);
+            return 1;
+        }
+        job = find_job_id((unsigned int)number);
+        if (job == NULL || !job->stopped || job->done) {
+            fprintf(stderr, "fg: stopped foreground job %ld not found\\n", number);
+            return 1;
+        }
+        {
+            struct sigaction old_int, old_tstp, ignore_action;
+            int status;
+            pid_t result;
+            memset(&ignore_action, 0, sizeof(ignore_action));
+            ignore_action.sa_handler = SIG_IGN;
+            sigemptyset(&ignore_action.sa_mask);
+            (void)sigaction(SIGINT, &ignore_action, &old_int);
+            (void)sigaction(SIGTSTP, &ignore_action, &old_tstp);
+            if (kill(job->pid, SIGCONT) != 0) {
+                perror("fg: SIGCONT");
+                (void)sigaction(SIGINT, &old_int, NULL);
+                (void)sigaction(SIGTSTP, &old_tstp, NULL);
+                return 1;
+            }
+            job->stopped = 0;
+            do {
+                result = waitpid(job->pid, &status, WUNTRACED);
+            } while (result < 0 && errno == EINTR);
+            (void)sigaction(SIGINT, &old_int, NULL);
+            (void)sigaction(SIGTSTP, &old_tstp, NULL);
+            if (result < 0) {
+                perror("fg: waitpid");
+                return 1;
+            }
+            if (WIFSTOPPED(status)) {
+                job->stopped = 1;
+                job->status = status;
+                printf("[%u] Stopped by signal %d\\n", job->id, WSTOPSIG(status));
+            } else {
+                job->done = 1;
+                job->status = status;
+                update_job(job, status);
+            }
+        }
+        return 1;
+    }
     if (strcmp(argv[0], "kill") == 0) {
         int signal_number = SIGTERM;
         if (argv[1] == NULL || !parse_positive(argv[1], &number) ||
@@ -194,7 +242,7 @@ int nova_process_builtin(char **argv) {
 int nova_process_run(char **argv, int background, const char *command_line) {
     pid_t pid;
     NovaJob *job = NULL;
-    struct sigaction old_int, ignore_int, default_int;
+    struct sigaction old_int, old_tstp, ignore_int, default_int;
 
     reap_jobs();
     if (background) {
@@ -212,11 +260,11 @@ int nova_process_run(char **argv, int background, const char *command_line) {
     default_int.sa_handler = SIG_DFL;
     sigemptyset(&default_int.sa_mask);
 
-    if (!background) (void)sigaction(SIGINT, &ignore_int, &old_int);
+    if (!background) {\n        (void)sigaction(SIGINT, &ignore_int, &old_int);\n        (void)sigaction(SIGTSTP, &ignore_int, &old_tstp);\n    }
     pid = fork();
     if (pid < 0) {
         int saved_errno = errno;
-        if (!background) (void)sigaction(SIGINT, &old_int, NULL);
+        if (!background) {\n            (void)sigaction(SIGINT, &old_int, NULL);\n            (void)sigaction(SIGTSTP, &old_tstp, NULL);\n        }
         errno = saved_errno;
         perror("nova: fork");
         return 1;
