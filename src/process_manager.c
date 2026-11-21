@@ -185,13 +185,11 @@ int nova_process_builtin(char **argv) {
         return 1;
     }
     if (strcmp(argv[0], "wait") == 0) {
-        int result = 0;
         reap_jobs();
         if (argv[1] == NULL) {
             for (i = 0; i < NOVA_JOB_LIMIT; i++) {
                 if (jobs[i].used && !jobs[i].done) {
-                    int code = wait_for_job(&jobs[i]);
-                    if (code != 0) result = code;
+                    (void)wait_for_job(&jobs[i]);
                 }
                 if (jobs[i].used && jobs[i].done) jobs[i].used = 0;
             }
