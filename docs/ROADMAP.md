@@ -20,9 +20,14 @@
 - [x] Lightweight shell smoke tests in CI.
 - [x] Initial shell lexer module: quoted words, variable expansion and operator tokens (`|`, `<`, `>`, `>>`, `&&`, `||`, `&`)
 - [x] Dedicated lexer unit tests included in `make test`
-- [ ] Integrate lexer into command execution; add syntax validation and parser tests
-- [ ] Implement pipelines, redirection and conditional execution
-- [ ] Automated tests beyond smoke coverage and Termux device validation
+- [x] Integrate lexer into command execution with quoted arguments and variable expansion
+- [x] Implement external-command pipelines with `|`
+- [x] Implement file input `<` and output `>` / `>>` redirection for external commands
+- [x] Implement `&&` and `||` conditional execution
+- [x] Extend smoke tests for quoting, redirection, pipelines and conditional execution
+- [ ] Built-in command redirection and built-ins inside pipelines
+- [ ] Background pipelines and full terminal process-group job control
+- [ ] Run CI for the integrated executor and validate on a real Termux device
 
 ## Later
 
