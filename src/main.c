@@ -579,6 +579,7 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
                                  int background, const char *original) {
     pid_t pids[NOVA_PIPELINE_LIMIT];
     int previous = -1, result = 0;
+    struct sigaction old_int, old_tstp, ignore_action, default_action;
     size_t i;
     if (count == 0 || count > NOVA_PIPELINE_LIMIT) return 2;
     if (background && count > 1) {
@@ -602,6 +603,15 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         return nova_process_run(cmds[0].argv, 1, original);
     }
 
+    memset(&ignore_action, 0, sizeof(ignore_action));
+    ignore_action.sa_handler = SIG_IGN;
+    sigemptyset(&ignore_action.sa_mask);
+    memset(&default_action, 0, sizeof(default_action));
+    default_action.sa_handler = SIG_DFL;
+    sigemptyset(&default_action.sa_mask);
+    (void)sigaction(SIGINT, &ignore_action, &old_int);
+    (void)sigaction(SIGTSTP, &ignore_action, &old_tstp);
+
     for (i = 0; i < count; i++) {
         int fds[2] = {-1, -1};
         pid_t pid;
@@ -612,6 +622,8 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         }
         pid = fork();
         if (pid < 0) {
+            (void)sigaction(SIGINT, &old_int, NULL);
+            (void)sigaction(SIGTSTP, &old_tstp, NULL);
             perror("nova: fork");
             if (previous >= 0) close(previous);
             if (fds[0] >= 0) close(fds[0]);
@@ -619,6 +631,8 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
             return 1;
         }
         if (pid == 0) {
+            (void)sigaction(SIGINT, &default_action, NULL);
+            (void)sigaction(SIGTSTP, &default_action, NULL);
             if (previous >= 0) { (void)dup2(previous, STDIN_FILENO); close(previous); }
             if (fds[1] >= 0) { (void)dup2(fds[1], STDOUT_FILENO); close(fds[1]); }
             if (fds[0] >= 0) close(fds[0]);
@@ -641,6 +655,8 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         if (waited < 0) { perror("nova: waitpid"); result = 1; }
         else if (i + 1 == count) result = nova_status_from_wait(child_status);
     }
+    (void)sigaction(SIGINT, &old_int, NULL);
+    (void)sigaction(SIGTSTP, &old_tstp, NULL);
     return result;
 }
 
