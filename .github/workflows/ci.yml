@@ -1,0 +1,19 @@
+name: NOVA Terminal CI
+
+on:
+  push:
+    branches: [main, "develop/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Build with GCC
+        run: make clean all CC=gcc
