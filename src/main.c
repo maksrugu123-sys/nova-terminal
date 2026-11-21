@@ -600,7 +600,9 @@ int main(void) {
             }
             handled = run_builtin(argv);
             if (!handled) handled = nova_shell_builtin(argv);
+            if (!handled && !background && strcmp(argv[0], "fg") == 0) restore_terminal();
             if (!handled) handled = nova_process_builtin(argv);
+            if (!background && strcmp(argv[0], "fg") == 0) (void)enable_raw_terminal();
             if (handled) {
                 if (background) print_error("built-in commands cannot run in the background");
                 continue;
