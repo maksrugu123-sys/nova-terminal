@@ -9,7 +9,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include "editor.h"
 #include <sys/wait.h>
 #include <termios.h>
@@ -40,6 +39,44 @@ static const char *C_OK = "\033[38;5;82m";
 static const char *C_ERROR = "\033[38;5;196m";
 static const char *C_INFO = "\033[38;5;141m";
 static const char *C_HINT = "\033[38;5;244m";
+
+static const char *C_WARN = "\033[38;5;214m";
+static const char *C_FILE = "\033[38;5;81m";
+static const char *C_DIR = "\033[38;5;39m";
+
+static void set_theme(const char *name) {
+    if (strcmp(name, "nova") == 0) {
+        C_PROMPT="\033[38;5;45m"; C_PATH="\033[38;5;111m"; C_COMMAND="\033[38;5;220m";
+        C_OK="\033[38;5;82m"; C_ERROR="\033[38;5;196m"; C_INFO="\033[38;5;141m";
+    } else if (strcmp(name, "matrix") == 0) {
+        C_PROMPT="\033[38;5;46m"; C_PATH="\033[38;5;112m"; C_COMMAND="\033[38;5;118m";
+        C_OK="\033[38;5;82m"; C_ERROR="\033[38;5;196m"; C_INFO="\033[38;5;48m";
+    } else if (strcmp(name, "sunset") == 0) {
+        C_PROMPT="\033[38;5;213m"; C_PATH="\033[38;5;177m"; C_COMMAND="\033[38;5;220m";
+        C_OK="\033[38;5;114m"; C_ERROR="\033[38;5;196m"; C_INFO="\033[38;5;207m";
+    } else if (strcmp(name, "ocean") == 0) {
+        C_PROMPT="\033[38;5;51m"; C_PATH="\033[38;5;75m"; C_COMMAND="\033[38;5;159m";
+        C_OK="\033[38;5;84m"; C_ERROR="\033[38;5;203m"; C_INFO="\033[38;5;117m";
+    } else if (strcmp(name, "mono") == 0) {
+        C_PROMPT="\033[1;37m"; C_PATH="\033[37m"; C_COMMAND="\033[1;37m";
+        C_OK="\033[1;37m"; C_ERROR="\033[1;37m"; C_INFO="\033[37m";
+    }
+}
+
+static size_t utf8_prev(const char *s, size_t pos) {
+    if (pos == 0) return 0;
+    pos--;
+    while (pos > 0 && (((unsigned char)s[pos] & 0xC0U) == 0x80U)) pos--;
+    return pos;
+}
+
+static size_t utf8_next(const char *s, size_t len, size_t pos) {
+    if (pos >= len) return len;
+    pos++;
+    while (pos < len && (((unsigned char)s[pos] & 0xC0U) == 0x80U)) pos++;
+    return pos;
+}
+
 
 static const char *color(const char *value) {
     return use_color ? value : "";
@@ -289,8 +326,9 @@ static ssize_t read_line(char *buffer, size_t capacity) {
         }
         if (c == 127 || c == 8) {
             if (cursor > 0) {
-                memmove(buffer + cursor - 1, buffer + cursor, length - cursor + 1);
-                cursor--; length--;
+                size_t prev = utf8_prev(buffer, cursor);
+                memmove(buffer + prev, buffer + cursor, length - cursor + 1);
+                length -= cursor - prev; cursor = prev;
                 redraw_line(buffer, length, cursor);
             }
             continue;
@@ -319,17 +357,19 @@ static ssize_t read_line(char *buffer, size_t capacity) {
                     redraw_line(buffer, length, cursor);
                 }
             } else if (seq[1] == 'C' && cursor < length) {
-                cursor++;
-                fputs("\033[C", stdout);
-                fflush(stdout);
+                cursor = utf8_next(buffer, length, cursor);
+                redraw_line(buffer, length, cursor);
             } else if (seq[1] == 'D' && cursor > 0) {
-                cursor--;
-                fputs("\033[D", stdout);
-                fflush(stdout);
+                cursor = utf8_prev(buffer, cursor);
+                redraw_line(buffer, length, cursor);
+            } else if (seq[1] == 'H') {
+                cursor = 0; redraw_line(buffer, length, cursor);
+            } else if (seq[1] == 'F') {
+                cursor = length; redraw_line(buffer, length, cursor);
             }
             continue;
         }
-        if (c >= 32 && c < 127 && length + 1 < capacity) {
+        if (c >= 32 && length + 1 < capacity) {
             memmove(buffer + cursor + 1, buffer + cursor, length - cursor + 1);
             buffer[cursor++] = (char)c;
             length++;
@@ -430,6 +470,7 @@ static void print_help(void) {
     printf("  %scd [DIR]%s   Change working directory\n", color(C_COMMAND), color(C_RESET));
     printf("  %sclear%s      Clear the terminal\n", color(C_COMMAND), color(C_RESET));
     printf("  %shistory%s    Show recent command history\n", color(C_COMMAND), color(C_RESET));
+    printf("  %stheme [NAME]%s Switch palette: nova, matrix, sunset, ocean, mono\n", color(C_COMMAND), color(C_RESET));
     printf("  %sedit FILE%s  Open the lightweight line editor\n", color(C_COMMAND), color(C_RESET));
     printf("  %sworkspace%s  Manage a NOVA workspace\n", color(C_COMMAND), color(C_RESET));
     printf("  %skernel%s     Manage kernel project scaffolding\n", color(C_COMMAND), color(C_RESET));
@@ -447,6 +488,17 @@ static int run_builtin(char **argv) {
         return 1;
     }
     if (strcmp(argv[0], "clear") == 0) { fputs("\033[2J\033[H", stdout); return 1; }
+    if (strcmp(argv[0], "theme") == 0) {
+        if (argv[1] == NULL) {
+            puts("Available themes: nova matrix sunset ocean mono");
+        } else if (strcmp(argv[1], "nova") == 0 || strcmp(argv[1], "matrix") == 0 ||
+                   strcmp(argv[1], "sunset") == 0 || strcmp(argv[1], "ocean") == 0 ||
+                   strcmp(argv[1], "mono") == 0) {
+            set_theme(argv[1]);
+            printf("%sTheme changed: %s%s\n", color(C_OK), argv[1], color(C_RESET));
+        } else print_error("unknown theme; use: theme nova|matrix|sunset|ocean|mono");
+        return 1;
+    }
     if (strcmp(argv[0], "edit") == 0) { (void)nova_edit_file(argv[1]); return 1; }
     if (strcmp(argv[0], "workspace") == 0) { workspace_command(argv); return 1; }
     if (strcmp(argv[0], "kernel") == 0) { kernel_command(argv); return 1; }
