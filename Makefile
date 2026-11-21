@@ -8,7 +8,8 @@ PREFIX := /usr/local
 endif
 BINDIR := $(PREFIX)/bin
 TARGET := nova
-SOURCES := src/main.c src/editor.c src/shell_features.c src/process_manager.c
+PARSER_TEST := parser_test
+SOURCES := src/main.c src/editor.c src/shell_features.c src/process_manager.c src/parser.c
 
 .PHONY: all test clean install uninstall
 all: $(TARGET)
@@ -16,7 +17,11 @@ all: $(TARGET)
 $(TARGET): $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) -o $@
 
-test: $(TARGET)
+$(PARSER_TEST): tests/parser_test.c src/parser.c src/parser.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/parser_test.c src/parser.c $(LDFLAGS) -o $@
+
+test: $(TARGET) $(PARSER_TEST)
+	./$(PARSER_TEST)
 	sh tests/smoke.sh
 
 install: $(TARGET)
@@ -27,4 +32,4 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(TARGET)"
 
 clean:
-	rm -f $(TARGET) *.o
+	rm -f $(TARGET) $(PARSER_TEST) *.o
