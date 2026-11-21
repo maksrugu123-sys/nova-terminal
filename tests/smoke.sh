@@ -14,11 +14,9 @@ output=$(
         'exit' | ./nova
 )
 
-printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -F 'NOVA Terminal 0.2.0-dev' >/dev/null
 printf '%s\n' "$output" | grep -F 'works' >/dev/null
 printf '%s\n' "$output" | grep -F 'hello' >/dev/null
 printf '%s\n' "$output" | grep -F '[1]' >/dev/null
 
-printf '%s\n' "$output"
 echo "NOVA smoke tests passed."
