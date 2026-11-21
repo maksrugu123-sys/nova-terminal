@@ -8,13 +8,16 @@ PREFIX := /usr/local
 endif
 BINDIR := $(PREFIX)/bin
 TARGET := nova
-SOURCES := src/main.c src/editor.c src/shell_features.c
+SOURCES := src/main.c src/editor.c src/shell_features.c src/process_manager.c
 
-.PHONY: all clean install uninstall
+.PHONY: all test clean install uninstall
 all: $(TARGET)
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) -o $@
+
+test: $(TARGET)
+	sh tests/smoke.sh
 
 install: $(TARGET)
 	mkdir -p "$(DESTDIR)$(BINDIR)"
