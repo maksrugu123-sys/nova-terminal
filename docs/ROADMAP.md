@@ -15,12 +15,16 @@
 - [x] Simple line-oriented `edit` utility
 - [x] `workspace init` and `workspace info`
 - [x] `kernel status` and `kernel init` (project scaffold only; not device-kernel operations)
-- [ ] Automated tests and Termux validation
+- [x] Basic background process tracking (`&`, `jobs`, `wait`, `kill`).
+- [x] Foreground Ctrl+C interruption and Ctrl+Z stop/resume (`fg`).
+- [x] Lightweight shell smoke tests in CI.
+- [ ] Automated tests beyond smoke coverage and Termux device validation
 
 ## Later
 
 - Better terminal capability detection and configurable themes.
-- Safer command parsing and selected shell-like conveniences.
+- Full terminal process-group management and foreground/background terminal handoff.
+- Safer command parsing, quoting, pipelines and redirection.
 - Plugin/extension interface only after the core stabilizes.
 
 ## Scope rules
