@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #define EDITOR_LINE_LIMIT 10000
 
@@ -51,16 +52,17 @@ static int load_file(Buffer *b, const char *path) {
     char *line = NULL;
     size_t cap = 0;
     ssize_t n;
-    if (f == NULL) return 0;
+    if (f == NULL) return errno == ENOENT ? 0 : -1;
     while ((n = getline(&line, &cap, f)) >= 0) {
         while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
         if (!insert_line(b, b->count, line)) {
             free(line);
             fclose(f);
-            return 0;
+            return -1;
         }
     }
     free(line);
+    if (ferror(f)) { fclose(f); return -1; }
     fclose(f);
     b->dirty = 0;
     return 1;
@@ -106,7 +108,7 @@ int nova_edit_file(const char *path) {
         fprintf(stderr, "edit: usage: edit FILE\n");
         return 2;
     }
-    if (!load_file(&b, path) && fopen(path, "r") != NULL) {
+    if (load_file(&b, path) < 0) {
         fprintf(stderr, "edit: could not read %s\n", path);
         free_buffer(&b);
         return 1;
