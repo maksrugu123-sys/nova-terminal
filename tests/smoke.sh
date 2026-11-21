@@ -8,9 +8,9 @@ output=$(
         'echo $NOVA_TEST_VALUE' \
         'alias greet=echo' \
         'greet hello' \
-        'env > .nova-smoke-env' \\
-        'grep NOVA_TEST_VALUE < .nova-smoke-env | grep works && echo builtin-redirection-ok' \\
-        'env | grep NOVA_TEST_VALUE | grep works && echo builtin-pipeline-ok' \\
+        'env > .nova-smoke-env' \
+        'grep NOVA_TEST_VALUE < .nova-smoke-env | grep works && echo builtin-redirection-ok' \
+        'env | grep NOVA_TEST_VALUE | grep works && echo builtin-pipeline-ok' \
         'echo "quoted words"' \
         'echo "hello world" > .nova-smoke-output' \
         'cat < .nova-smoke-output | grep "hello world" && echo pipeline-ok' \
