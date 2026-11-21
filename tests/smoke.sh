@@ -6,8 +6,8 @@ output=$(
         'version' \
         'export NOVA_TEST_VALUE=works' \
         'echo $NOVA_TEST_VALUE' \
-        'alias greet=echo hello' \
-        'greet' \
+        'alias greet=echo' \
+        'greet hello' \
         'sleep 0.1 &' \
         'jobs' \
         'wait' \
