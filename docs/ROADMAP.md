@@ -4,6 +4,9 @@
 
 - [x] C project layout and Termux Makefile
 - [x] Colored prompt and categorized status/error output
+- [x] Five selectable ANSI color themes
+- [x] File/directory color distinction in completion results
+- [x] UTF-8 input support for Android keyboard text
 - [x] Built-ins: `help`, `version`, `cd`, `clear`, `exit`
 - [x] Launch external programs with `fork`/`execvp`
 - [x] Interactive history with Up/Down and persistent `~/.nova_history`
