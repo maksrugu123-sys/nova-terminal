@@ -9,9 +9,9 @@
 - [x] Interactive history with Up/Down and persistent `~/.nova_history`
 - [x] Cursor movement, Backspace, Ctrl-C and Ctrl-D handling
 - [x] Tab completion for filesystem paths (command-name completion remains planned)
-- [ ] Simple line-oriented `edit` utility
-- [ ] `workspace init` and `workspace info`
-- [ ] `kernel status` and `kernel init`
+- [x] Simple line-oriented `edit` utility
+- [x] `workspace init` and `workspace info`
+- [x] `kernel status` and `kernel init` (project scaffold only; not device-kernel operations)
 - [ ] Automated tests and Termux validation
 
 ## Later
