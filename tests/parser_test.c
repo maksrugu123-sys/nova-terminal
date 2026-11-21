@@ -29,10 +29,10 @@ int main(void) {
     assert(n == 4);
     assert(strcmp(tokens[1].text, "$NOVA_LEX_TEST") == 0);
     assert(strcmp(tokens[2].text, "expanded value") == 0);
-    assert(strcmp(tokens[3].text, "expanded") == 0);
+    assert(strcmp(tokens[3].text, "expanded value") == 0);
 
     n = lex("cat < in.txt | grep \"a b\" >> out.txt && echo ok || echo fail &", tokens);
-    assert(n == 14);
+    assert(n == 15);
     assert(tokens[1].type == NOVA_TOK_REDIRECT_IN);
     assert(tokens[3].type == NOVA_TOK_PIPE);
     assert(tokens[6].type == NOVA_TOK_REDIRECT_APPEND);
