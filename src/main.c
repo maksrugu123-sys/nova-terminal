@@ -575,6 +575,18 @@ static int nova_apply_redirects(const NovaExecCommand *cmd) {
     return 1;
 }
 
+static int nova_builtin_name(const char *name) {
+    static const char *const names[] = {
+        "help", "version", "clear", "theme", "edit", "workspace", "kernel",
+        "history", "exit", "cd", "env", "export", "unset", "alias",
+        "unalias", "jobs", "wait", "fg", "kill", NULL
+    };
+    size_t i;
+    for (i = 0; names[i] != NULL; i++)
+        if (strcmp(name, names[i]) == 0) return 1;
+    return 0;
+}
+
 static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
                                  int background, const char *original) {
     pid_t pids[NOVA_PIPELINE_LIMIT];
@@ -587,7 +599,8 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         return 2;
     }
 
-    if (count == 1 && !background) {
+    if (count == 1 && !background &&
+        (cmds[0].input == NULL && cmds[0].output == NULL || nova_builtin_name(cmds[0].argv[0]))) {
         int saved_in = -1, saved_out = -1, handled = 0;
         int redirected = cmds[0].input != NULL || cmds[0].output != NULL;
         if (redirected) {
