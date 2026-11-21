@@ -25,7 +25,9 @@
 - [x] Implement file input `<` and output `>` / `>>` redirection for external commands
 - [x] Implement `&&` and `||` conditional execution
 - [x] Extend smoke tests for quoting, redirection, pipelines and conditional execution
-- [ ] Built-in command redirection and built-ins inside pipelines
+- [x] Redirect output/input for parent-executed built-ins
+- [x] Execute ordinary NOVA and shell built-ins in pipeline child processes (changes stay child-local)
+- [ ] Process-control built-ins (`jobs`, `wait`, `fg`, `kill`) inside pipelines
 - [ ] Background pipelines and full terminal process-group job control
 - [ ] Run CI for the integrated executor and validate on a real Termux device
 
