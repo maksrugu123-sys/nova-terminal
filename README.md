@@ -1,0 +1,57 @@
+# NOVA Terminal
+
+A lightweight hybrid command environment for Android and Termux, written in C.
+
+## Project goals
+
+- A small native C command environment for Android/Termux.
+- A hybrid model: built-in NOVA commands plus launching external programs through the system PATH.
+- A readable, color-rich classic terminal interface.
+- Low memory use and no heavyweight runtime dependencies.
+
+## Status
+
+- Previous local prototype: `0.1.0` (reported working in Termux).
+- Current repository baseline: being established.
+- Next development target: `0.2.0`.
+
+The existing local `0.1.0` installation is not replaced by this repository work. New development will be isolated on `develop/0.2.0`.
+
+## Build on Termux
+
+Install the C toolchain:
+
+```sh
+pkg update
+pkg install clang make
+```
+
+Then, from the repository root:
+
+```sh
+make
+./nova
+```
+
+Install into the Termux prefix:
+
+```sh
+make install
+```
+
+## Planned 0.2.0 work
+
+- Distinct ANSI colors for prompt, commands, paths, output, warnings and errors.
+- Command history and interactive line editing.
+- Tab completion for commands and filesystem paths.
+- Built-in file editor and workspace helpers.
+- Kernel project status/init helpers.
+- Tests and clear documentation of supported behavior.
+
+## Design boundary
+
+NOVA Terminal is a command environment, not a replacement for a POSIX shell yet. Shell features such as pipelines, redirection, quoting rules and job control must not be assumed unless explicitly implemented and tested.
+
+## License
+
+License has not been selected yet.
