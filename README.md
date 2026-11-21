@@ -41,9 +41,10 @@ make install
 
 ## Planned 0.2.0 work
 
-- Distinct ANSI colors for prompt, commands, paths, output, warnings and errors.
-- Command history and interactive line editing.
-- Tab completion for commands and filesystem paths.
+- Distinct ANSI colors for prompt, paths, help and status/error output.
+- Persistent command history in `~/.nova_history` (Up/Down navigation).
+- Interactive cursor movement, Backspace, Ctrl-C and Ctrl-D.
+- Tab completion for filesystem paths.
 - Built-in file editor and workspace helpers.
 - Kernel project status/init helpers.
 - Tests and clear documentation of supported behavior.
