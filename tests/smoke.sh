@@ -29,6 +29,6 @@ if printf '%s\n' "$output" | grep -F 'should-not-appear' >/dev/null; then
     echo 'conditional execution failed' >&2
     exit 1
 fi
-rm -f .nova-smoke-output
+rm -f .nova-smoke-output .nova-smoke-env
 
 echo "NOVA smoke tests passed."
