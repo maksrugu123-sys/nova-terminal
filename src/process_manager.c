@@ -3,6 +3,7 @@
 #include "process_manager.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -175,7 +176,7 @@ int nova_process_builtin(char **argv) {
             return 1;
         }
         if (argv[2] != NULL) {
-            if (!parse_positive(argv[2], &number) || number >= NSIG) {
+            if (!parse_positive(argv[2], &number) || number > 64) {
                 fputs("kill: signal must be a valid positive signal number\n", stderr);
                 return 1;
             }
