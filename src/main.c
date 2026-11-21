@@ -9,6 +9,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include "editor.h"
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -343,6 +345,91 @@ static ssize_t read_line(char *buffer, size_t capacity) {
     }
 }
 
+
+static int ensure_directory(const char *path) {
+    if (mkdir(path, 0755) == 0) return 1;
+    if (errno == EEXIST) {
+        struct stat st;
+        return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    }
+    return 0;
+}
+
+static void workspace_command(char **argv) {
+    char cwd[PATH_MAX];
+    if (argv[1] == NULL || strcmp(argv[1], "info") == 0) {
+        FILE *f = fopen(".nova/workspace.conf", "r");
+        char name[256];
+        if (f == NULL) {
+            puts("No NOVA workspace in this directory. Use: workspace init [NAME]");
+            return;
+        }
+        if (fgets(name, sizeof(name), f) != NULL) {
+            name[strcspn(name, "\r\n")] = '\0';
+            printf("Workspace: %s\n", name);
+        }
+        fclose(f);
+        if (getcwd(cwd, sizeof(cwd)) != NULL) printf("Directory: %s\n", cwd);
+        return;
+    }
+    if (strcmp(argv[1], "init") == 0) {
+        const char *name = argv[2];
+        FILE *f;
+        if (name == NULL) {
+            if (getcwd(cwd, sizeof(cwd)) == NULL) strcpy(cwd, "workspace");
+            name = strrchr(cwd, '/');
+            name = name == NULL ? cwd : name + 1;
+        }
+        if (!ensure_directory(".nova")) {
+            print_error("cannot create .nova directory");
+            return;
+        }
+        f = fopen(".nova/workspace.conf", "w");
+        if (f == NULL) { print_error("cannot write workspace metadata"); return; }
+        fprintf(f, "%s\n", name);
+        fclose(f);
+        printf("%sWorkspace initialized: %s%s\n", color(C_OK), name, color(C_RESET));
+        return;
+    }
+    puts("Usage: workspace [info | init [NAME]]");
+}
+
+static void kernel_command(char **argv) {
+    struct stat st;
+    if (argv[1] == NULL || strcmp(argv[1], "status") == 0) {
+        if (stat("kernel", &st) == 0 && S_ISDIR(st.st_mode)) {
+            puts("Kernel project scaffold: present");
+            if (access("kernel/README.md", R_OK) == 0) puts("Documentation: kernel/README.md");
+        } else {
+            puts("Kernel project scaffold: not initialized");
+            puts("Use: kernel init");
+        }
+        puts("Note: this checks project files; it does not inspect or modify the device kernel.");
+        return;
+    }
+    if (strcmp(argv[1], "init") == 0) {
+        FILE *f;
+        if (!ensure_directory("kernel")) {
+            print_error("cannot create kernel directory");
+            return;
+        }
+        if (access("kernel/README.md", F_OK) == 0) {
+            puts("kernel/ already exists; leaving existing files unchanged.");
+            return;
+        }
+        f = fopen("kernel/README.md", "w");
+        if (f == NULL) { print_error("cannot create kernel/README.md"); return; }
+        fputs("# Kernel project scaffold\n\n"
+              "This directory is a project workspace only. It is not a bootable kernel.\n"
+              "Record the target device, architecture, boot chain, source baseline, "
+              "toolchain and recovery plan before attempting device-level work.\n", f);
+        fclose(f);
+        puts("Created kernel/README.md. This is documentation scaffolding, not a kernel implementation.");
+        return;
+    }
+    puts("Usage: kernel [status | init]");
+}
+
 static void print_help(void) {
     puts("NOVA Terminal " NOVA_VERSION " — built-in commands:");
     printf("  %shelp%s       Show this help\n", color(C_COMMAND), color(C_RESET));
@@ -350,6 +437,9 @@ static void print_help(void) {
     printf("  %scd [DIR]%s   Change working directory\n", color(C_COMMAND), color(C_RESET));
     printf("  %sclear%s      Clear the terminal\n", color(C_COMMAND), color(C_RESET));
     printf("  %shistory%s    Show recent command history\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sedit FILE%s  Open the lightweight line editor\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sworkspace%s  Manage a NOVA workspace\n", color(C_COMMAND), color(C_RESET));
+    printf("  %skernel%s     Manage kernel project scaffolding\n", color(C_COMMAND), color(C_RESET));
     printf("  %sexit%s       Exit NOVA Terminal\n", color(C_COMMAND), color(C_RESET));
     puts("Tab completes filesystem paths; Up/Down browse saved history.");
     puts("Other commands are searched for in PATH and launched as external programs.");
@@ -364,6 +454,9 @@ static int run_builtin(char **argv) {
         return 1;
     }
     if (strcmp(argv[0], "clear") == 0) { fputs("\033[2J\033[H", stdout); return 1; }
+    if (strcmp(argv[0], "edit") == 0) { (void)nova_edit_file(argv[1]); return 1; }
+    if (strcmp(argv[0], "workspace") == 0) { workspace_command(argv); return 1; }
+    if (strcmp(argv[0], "kernel") == 0) { kernel_command(argv); return 1; }
     if (strcmp(argv[0], "history") == 0) {
         size_t i;
         for (i = 0; i < history_count; i++) printf("%s%3zu%s  %s\n", color(C_HINT), i + 1, color(C_RESET), history[i]);
