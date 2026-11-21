@@ -45,8 +45,9 @@ make install
 - Persistent command history in `~/.nova_history` (Up/Down navigation).
 - Interactive cursor movement, Backspace, Ctrl-C and Ctrl-D.
 - Tab completion for filesystem paths.
-- Built-in file editor and workspace helpers.
-- Kernel project status/init helpers.
+- Line-oriented built-in editor (`edit FILE`).
+- Workspace metadata helpers (`workspace init`, `workspace info`).
+- Kernel project scaffold helpers (`kernel init`, `kernel status`); these do not build, flash, or inspect a device kernel.
 - Tests and clear documentation of supported behavior.
 
 ## Design boundary
