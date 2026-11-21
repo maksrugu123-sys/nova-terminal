@@ -594,7 +594,7 @@ static int execute_pipeline(NovaExecCommand *cmds, size_t count, int background,
     int last_status = 0;
     if (count == 0 || count > NOVA_PIPELINE_LIMIT) return 2;
 
-    if (count == 1 && !background) {
+    if (count == 1 && !background && cmds[0].input == NULL && cmds[0].output == NULL) {
         int saved_in = -1, saved_out = -1, result = 0;
         int has_redir = cmds[0].input != NULL || cmds[0].output != NULL;
         if (has_redir) {
@@ -684,7 +684,7 @@ static int execute_line(const char *line, const char *original) {
     NovaExecCommand commands[NOVA_PIPELINE_LIMIT];
     char error[160];
     int n = nova_lex(line, tokens, NOVA_TOKEN_LIMIT, error, sizeof(error));
-    int i = 0, status = 0, have_pipeline = 0, background = 0;
+    int i = 0, status = 0, background = 0;
     int next_condition = 0; /* 0=always, 1=on success, 2=on failure */
     if (n < 0) { fprintf(stderr, "nova: parse: %s\n", error); return 2; }
     if (n == 0) return 0;
