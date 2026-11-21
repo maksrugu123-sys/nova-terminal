@@ -538,22 +538,6 @@ static int run_builtin(char **argv) {
     return 0;
 }
 
-static void run_external(char **argv) {
-    pid_t pid = fork();
-    if (pid < 0) { print_error(strerror(errno)); return; }
-    if (pid == 0) {
-        execvp(argv[0], argv);
-        fprintf(stderr, "%snova: %s: %s%s\n", color(C_ERROR), argv[0], strerror(errno), color(C_RESET));
-        _exit(errno == ENOENT ? 127 : 126);
-    }
-    for (;;) {
-        int status;
-        pid_t result = waitpid(pid, &status, 0);
-        if (result >= 0) break;
-        if (errno != EINTR) { print_error("could not wait for child process"); break; }
-    }
-}
-
 static size_t split_args(char *line, char **argv) {
     size_t count = 0;
     char *save = NULL;
