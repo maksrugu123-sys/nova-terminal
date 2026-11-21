@@ -53,6 +53,7 @@ static NovaJob *allocate_job(void) {
 
 static void update_job(NovaJob *job, int status) {
     job->done = 1;
+    job->stopped = 0;
     job->status = status;
     if (WIFEXITED(status))
         printf("[%u] Done (exit %d) %s\n", job->id, WEXITSTATUS(status), job->command);
@@ -66,7 +67,7 @@ static void reap_jobs(void) {
     for (i = 0; i < NOVA_JOB_LIMIT; i++) {
         int status;
         pid_t result;
-        if (!jobs[i].used || jobs[i].done) continue;
+        if (!jobs[i].used || jobs[i].done || jobs[i].stopped) continue;
         do {
             result = waitpid(jobs[i].pid, &status, WNOHANG);
         } while (result < 0 && errno == EINTR);
@@ -90,7 +91,9 @@ static int parse_positive(const char *text, long *value) {
 }
 
 static void print_job_status(const NovaJob *job) {
-    if (!job->done) {
+    if (job->stopped) {
+        printf("[%u] Stopped  %ld  %s\n", job->id, (long)job->pid, job->command);
+    } else if (!job->done) {
         printf("[%u] Running  %ld  %s\n", job->id, (long)job->pid, job->command);
     } else if (WIFEXITED(job->status)) {
         printf("[%u] Done     %ld  exit %d  %s\n", job->id, (long)job->pid,
@@ -106,6 +109,11 @@ static void print_job_status(const NovaJob *job) {
 static int wait_for_job(NovaJob *job) {
     int status;
     pid_t result;
+    if (job->stopped) {
+        fprintf(stderr, "wait: job %u is stopped; use fg %u to resume it\n",
+                job->id, job->id);
+        return 1;
+    }
     if (job->done) {
         status = job->status;
     } else {
@@ -124,6 +132,46 @@ static int wait_for_job(NovaJob *job) {
     return 1;
 }
 
+static int resume_foreground_job(NovaJob *job) {
+    struct sigaction old_int, old_tstp, ignore_action;
+    int status;
+    pid_t result;
+
+    memset(&ignore_action, 0, sizeof(ignore_action));
+    ignore_action.sa_handler = SIG_IGN;
+    sigemptyset(&ignore_action.sa_mask);
+    (void)sigaction(SIGINT, &ignore_action, &old_int);
+    (void)sigaction(SIGTSTP, &ignore_action, &old_tstp);
+
+    if (kill(job->pid, SIGCONT) != 0) {
+        perror("fg: SIGCONT");
+        (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTSTP, &old_tstp, NULL);
+        return 1;
+    }
+    job->stopped = 0;
+    do {
+        result = waitpid(job->pid, &status, WUNTRACED);
+    } while (result < 0 && errno == EINTR);
+
+    (void)sigaction(SIGINT, &old_int, NULL);
+    (void)sigaction(SIGTSTP, &old_tstp, NULL);
+    if (result < 0) {
+        perror("fg: waitpid");
+        return 1;
+    }
+    if (WIFSTOPPED(status)) {
+        job->stopped = 1;
+        job->status = status;
+        printf("[%u] Stopped by signal %d\n", job->id, WSTOPSIG(status));
+        return 128 + WSTOPSIG(status);
+    }
+    update_job(job, status);
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+
 int nova_process_builtin(char **argv) {
     long number;
     NovaJob *job;
@@ -137,9 +185,9 @@ int nova_process_builtin(char **argv) {
         return 1;
     }
     if (strcmp(argv[0], "wait") == 0) {
+        int result = 0;
         reap_jobs();
         if (argv[1] == NULL) {
-            int result = 0;
             for (i = 0; i < NOVA_JOB_LIMIT; i++) {
                 if (jobs[i].used && !jobs[i].done) {
                     int code = wait_for_job(&jobs[i]);
@@ -158,58 +206,22 @@ int nova_process_builtin(char **argv) {
             fprintf(stderr, "wait: job %ld not found\n", number);
             return 1;
         }
-        {
-            int result = wait_for_job(job);
-            job->used = 0;
-            return result;
-        }
+        result = wait_for_job(job);
+        if (job->done) job->used = 0;
+        return result;
     }
     if (strcmp(argv[0], "fg") == 0) {
-        if (argv[1] == NULL || !parse_positive(argv[1], &number) || number > 2147483647L) {
-            fputs("Usage: fg JOB_ID (stopped foreground jobs only)\\n", stderr);
+        if (argv[1] == NULL || !parse_positive(argv[1], &number) ||
+            number > 2147483647L) {
+            fputs("Usage: fg JOB_ID (stopped foreground jobs only)\n", stderr);
             return 1;
         }
         job = find_job_id((unsigned int)number);
         if (job == NULL || !job->stopped || job->done) {
-            fprintf(stderr, "fg: stopped foreground job %ld not found\\n", number);
+            fprintf(stderr, "fg: stopped foreground job %ld not found\n", number);
             return 1;
         }
-        {
-            struct sigaction old_int, old_tstp, ignore_action;
-            int status;
-            pid_t result;
-            memset(&ignore_action, 0, sizeof(ignore_action));
-            ignore_action.sa_handler = SIG_IGN;
-            sigemptyset(&ignore_action.sa_mask);
-            (void)sigaction(SIGINT, &ignore_action, &old_int);
-            (void)sigaction(SIGTSTP, &ignore_action, &old_tstp);
-            if (kill(job->pid, SIGCONT) != 0) {
-                perror("fg: SIGCONT");
-                (void)sigaction(SIGINT, &old_int, NULL);
-                (void)sigaction(SIGTSTP, &old_tstp, NULL);
-                return 1;
-            }
-            job->stopped = 0;
-            do {
-                result = waitpid(job->pid, &status, WUNTRACED);
-            } while (result < 0 && errno == EINTR);
-            (void)sigaction(SIGINT, &old_int, NULL);
-            (void)sigaction(SIGTSTP, &old_tstp, NULL);
-            if (result < 0) {
-                perror("fg: waitpid");
-                return 1;
-            }
-            if (WIFSTOPPED(status)) {
-                job->stopped = 1;
-                job->status = status;
-                printf("[%u] Stopped by signal %d\\n", job->id, WSTOPSIG(status));
-            } else {
-                job->done = 1;
-                job->status = status;
-                update_job(job, status);
-            }
-        }
-        return 1;
+        return resume_foreground_job(job);
     }
     if (strcmp(argv[0], "kill") == 0) {
         int signal_number = SIGTERM;
@@ -242,7 +254,7 @@ int nova_process_builtin(char **argv) {
 int nova_process_run(char **argv, int background, const char *command_line) {
     pid_t pid;
     NovaJob *job = NULL;
-    struct sigaction old_int, old_tstp, ignore_int, default_int;
+    struct sigaction old_int, old_tstp, ignore_action, default_action;
 
     reap_jobs();
     if (background) {
@@ -253,25 +265,32 @@ int nova_process_run(char **argv, int background, const char *command_line) {
         }
     }
 
-    memset(&ignore_int, 0, sizeof(ignore_int));
-    ignore_int.sa_handler = SIG_IGN;
-    sigemptyset(&ignore_int.sa_mask);
-    memset(&default_int, 0, sizeof(default_int));
-    default_int.sa_handler = SIG_DFL;
-    sigemptyset(&default_int.sa_mask);
+    memset(&ignore_action, 0, sizeof(ignore_action));
+    ignore_action.sa_handler = SIG_IGN;
+    sigemptyset(&ignore_action.sa_mask);
+    memset(&default_action, 0, sizeof(default_action));
+    default_action.sa_handler = SIG_DFL;
+    sigemptyset(&default_action.sa_mask);
 
-    if (!background) {\n        (void)sigaction(SIGINT, &ignore_int, &old_int);\n        (void)sigaction(SIGTSTP, &ignore_int, &old_tstp);\n    }
+    if (!background) {
+        (void)sigaction(SIGINT, &ignore_action, &old_int);
+        (void)sigaction(SIGTSTP, &ignore_action, &old_tstp);
+    }
     pid = fork();
     if (pid < 0) {
         int saved_errno = errno;
-        if (!background) {\n            (void)sigaction(SIGINT, &old_int, NULL);\n            (void)sigaction(SIGTSTP, &old_tstp, NULL);\n        }
+        if (!background) {
+            (void)sigaction(SIGINT, &old_int, NULL);
+            (void)sigaction(SIGTSTP, &old_tstp, NULL);
+        }
         errno = saved_errno;
         perror("nova: fork");
         return 1;
     }
     if (pid == 0) {
-        (void)sigaction(SIGINT, &default_int, NULL);
-        (void)sigaction(SIGPIPE, &default_int, NULL);
+        (void)sigaction(SIGINT, &default_action, NULL);
+        (void)sigaction(SIGTSTP, &default_action, NULL);
+        (void)sigaction(SIGPIPE, &default_action, NULL);
         if (background) {
             int null_fd;
             (void)setpgid(0, 0);
@@ -303,12 +322,35 @@ int nova_process_run(char **argv, int background, const char *command_line) {
         int status;
         pid_t result;
         do {
-            result = waitpid(pid, &status, 0);
+            result = waitpid(pid, &status, WUNTRACED);
         } while (result < 0 && errno == EINTR);
         (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTSTP, &old_tstp, NULL);
         if (result < 0) {
             perror("nova: waitpid");
             return 1;
+        }
+        if (WIFSTOPPED(status)) {
+            NovaJob *stopped_job = allocate_job();
+            if (stopped_job == NULL) {
+                (void)kill(pid, SIGCONT);
+                (void)kill(pid, SIGTERM);
+                (void)waitpid(pid, NULL, 0);
+                fputs("nova: job table full; stopped process was terminated\n", stderr);
+                return 1;
+            }
+            memset(stopped_job, 0, sizeof(*stopped_job));
+            stopped_job->used = 1;
+            stopped_job->stopped = 1;
+            stopped_job->id = next_job_id++;
+            if (next_job_id == 0) next_job_id = 1;
+            stopped_job->pid = pid;
+            stopped_job->status = status;
+            snprintf(stopped_job->command, sizeof(stopped_job->command), "%s",
+                     command_line != NULL ? command_line : argv[0]);
+            printf("[%u] Stopped %ld %s\n", stopped_job->id, (long)pid,
+                   stopped_job->command);
+            return 128 + WSTOPSIG(status);
         }
         if (WIFEXITED(status)) return WEXITSTATUS(status);
         if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
@@ -320,17 +362,9 @@ void nova_process_shutdown(void) {
     size_t i;
     for (i = 0; i < NOVA_JOB_LIMIT; i++) {
         if (jobs[i].used && !jobs[i].done) {
+            if (jobs[i].stopped) (void)kill(jobs[i].pid, SIGCONT);
+            (void)kill(jobs[i].pid, SIGHUP);
             (void)kill(jobs[i].pid, SIGTERM);
-        }
-    }
-    for (i = 0; i < NOVA_JOB_LIMIT; i++) {
-        if (jobs[i].used && !jobs[i].done) {
-            int status;
-            pid_t result;
-            do {
-                result = waitpid(jobs[i].pid, &status, 0);
-            } while (result < 0 && errno == EINTR);
-            if (result == jobs[i].pid) update_job(&jobs[i], status);
         }
     }
 }
