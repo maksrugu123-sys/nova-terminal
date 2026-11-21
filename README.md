@@ -50,6 +50,9 @@ make install
 - Line-oriented built-in editor (`edit FILE`).
 - Workspace metadata helpers (`workspace init`, `workspace info`).
 - Kernel project scaffold helpers (`kernel init`, `kernel status`); these do not build, flash, or inspect a device kernel.
+- Environment commands: `export NAME=VALUE`, `unset NAME`, and `env`.
+- Simple `$NAME` and `${NAME}` expansion in command arguments.
+- Session-local aliases with `alias NAME=COMMAND` and `unalias NAME`.
 - Tests and clear documentation of supported behavior.
 
 ## Design boundary
