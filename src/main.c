@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "editor.h"
+#include "shell_features.h"
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -476,6 +477,11 @@ static void print_help(void) {
     printf("  %sclear%s      Clear the terminal\n", color(C_COMMAND), color(C_RESET));
     printf("  %shistory%s    Show recent command history\n", color(C_COMMAND), color(C_RESET));
     printf("  %stheme [NAME]%s Switch palette: nova, matrix, sunset, ocean, mono\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sexport NAME=VALUE%s Set an environment variable\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sunset NAME%s Remove an environment variable\n", color(C_COMMAND), color(C_RESET));
+    printf("  %senv%s         List environment variables\n", color(C_COMMAND), color(C_RESET));
+    printf("  %salias%s       List or define command aliases\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sunalias NAME%s Remove an alias\n", color(C_COMMAND), color(C_RESET));
     printf("  %sedit FILE%s  Open the lightweight line editor\n", color(C_COMMAND), color(C_RESET));
     printf("  %sworkspace%s  Manage a NOVA workspace\n", color(C_COMMAND), color(C_RESET));
     printf("  %skernel%s     Manage kernel project scaffolding\n", color(C_COMMAND), color(C_RESET));
@@ -576,8 +582,10 @@ int main(void) {
         if (length == 0) continue;
         snprintf(original, sizeof(original), "%s", line);
         add_history(original);
+        nova_shell_expand_alias(line, sizeof(line));
         if (split_args(line, argv) == 0) continue;
-        if (!run_builtin(argv)) run_external(argv);
+        nova_shell_expand_variables(argv);
+        if (!run_builtin(argv) && !nova_shell_builtin(argv)) run_external(argv);
     }
 
     restore_terminal();
