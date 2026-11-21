@@ -245,6 +245,13 @@ int nova_process_builtin(char **argv) {
             perror("kill");
             return 1;
         }
+        if (job->stopped && signal_number != SIGSTOP && signal_number != SIGTSTP) {
+            if (signal_number != SIGCONT && kill(job->pid, SIGCONT) != 0) {
+                perror("kill: SIGCONT");
+                return 1;
+            }
+            job->stopped = 0;
+        }
         return 1;
     }
     return 0;
