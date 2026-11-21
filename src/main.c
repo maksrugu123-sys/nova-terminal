@@ -600,7 +600,7 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
     }
 
     if (count == 1 && !background &&
-        (cmds[0].input == NULL && cmds[0].output == NULL || nova_builtin_name(cmds[0].argv[0]))) {
+        ((cmds[0].input == NULL && cmds[0].output == NULL) || nova_builtin_name(cmds[0].argv[0]))) {
         int saved_in = -1, saved_out = -1, handled = 0;
         int redirected = cmds[0].input != NULL || cmds[0].output != NULL;
         if (redirected) {
