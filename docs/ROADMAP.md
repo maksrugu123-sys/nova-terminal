@@ -18,6 +18,10 @@
 - [x] Basic background process tracking (`&`, `jobs`, `wait`, `kill`).
 - [x] Foreground Ctrl+C interruption and Ctrl+Z stop/resume (`fg`).
 - [x] Lightweight shell smoke tests in CI.
+- [x] Initial shell lexer module: quoted words, variable expansion and operator tokens (`|`, `<`, `>`, `>>`, `&&`, `||`, `&`)
+- [x] Dedicated lexer unit tests included in `make test`
+- [ ] Integrate lexer into command execution; add syntax validation and parser tests
+- [ ] Implement pipelines, redirection and conditional execution
 - [ ] Automated tests beyond smoke coverage and Termux device validation
 
 ## Later
