@@ -280,7 +280,12 @@ static void complete_path(char *line, size_t *length, size_t *cursor) {
     } else {
         putchar('\n');
         for (i = 0; i < match_count; i++) {
-            printf("%s%s%s  ", color(C_INFO), matches[i], color(C_RESET));
+            char full[PATH_MAX];
+            struct stat item_stat;
+            const char *item_color = C_FILE;
+            if (snprintf(full, sizeof(full), "%s/%s", directory, matches[i]) < (int)sizeof(full) &&
+                stat(full, &item_stat) == 0 && S_ISDIR(item_stat.st_mode)) item_color = C_DIR;
+            printf("%s%s%s  ", color(item_color), matches[i], color(C_RESET));
         }
         putchar('\n');
     }
@@ -477,7 +482,8 @@ static void print_help(void) {
     printf("  %sexit%s       Exit NOVA Terminal\n", color(C_COMMAND), color(C_RESET));
     puts("Tab completes filesystem paths; Up/Down browse saved history.");
     puts("Other commands are searched for in PATH and launched as external programs.");
-    puts("Pipelines, redirection, shell quoting and job control are not implemented yet.");
+    printf("%sNote:%s pipelines, redirection, shell quoting and job control are not implemented yet.\\n",
+           color(C_WARN), color(C_RESET));
 }
 
 static int run_builtin(char **argv) {
