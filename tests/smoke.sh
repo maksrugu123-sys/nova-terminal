@@ -8,6 +8,9 @@ output=$(
         'echo $NOVA_TEST_VALUE' \
         'alias greet=echo' \
         'greet hello' \
+        'env > .nova-smoke-env' \\
+        'grep NOVA_TEST_VALUE < .nova-smoke-env | grep works && echo builtin-redirection-ok' \\
+        'env | grep NOVA_TEST_VALUE | grep works && echo builtin-pipeline-ok' \\
         'echo "quoted words"' \
         'echo "hello world" > .nova-smoke-output' \
         'cat < .nova-smoke-output | grep "hello world" && echo pipeline-ok' \
@@ -25,6 +28,8 @@ printf '%s\n' "$output" | grep -F '[1]' >/dev/null
 printf '%s\n' "$output" | grep -F 'quoted words' >/dev/null
 printf '%s\n' "$output" | grep -F 'pipeline-ok' >/dev/null
 printf '%s\n' "$output" | grep -F 'conditional-ok' >/dev/null
+printf '%s\n' "$output" | grep -F 'builtin-redirection-ok' >/dev/null
+printf '%s\n' "$output" | grep -F 'builtin-pipeline-ok' >/dev/null
 if printf '%s\n' "$output" | grep -F 'should-not-appear' >/dev/null; then
     echo 'conditional execution failed' >&2
     exit 1
