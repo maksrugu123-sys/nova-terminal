@@ -616,6 +616,8 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         int fds[2] = {-1, -1};
         pid_t pid;
         if (i + 1 < count && pipe(fds) != 0) {
+            (void)sigaction(SIGINT, &old_int, NULL);
+            (void)sigaction(SIGTSTP, &old_tstp, NULL);
             perror("nova: pipe");
             if (previous >= 0) close(previous);
             return 1;
