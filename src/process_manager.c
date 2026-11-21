@@ -195,7 +195,7 @@ int nova_process_builtin(char **argv) {
                 }
                 if (jobs[i].used && jobs[i].done) jobs[i].used = 0;
             }
-            return result;
+            return 1;
         }
         if (!parse_positive(argv[1], &number) || number > 2147483647L) {
             fputs("Usage: wait [JOB_ID]\n", stderr);
@@ -206,9 +206,9 @@ int nova_process_builtin(char **argv) {
             fprintf(stderr, "wait: job %ld not found\n", number);
             return 1;
         }
-        result = wait_for_job(job);
+        (void)wait_for_job(job);
         if (job->done) job->used = 0;
-        return result;
+        return 1;
     }
     if (strcmp(argv[0], "fg") == 0) {
         if (argv[1] == NULL || !parse_positive(argv[1], &number) ||
@@ -221,7 +221,8 @@ int nova_process_builtin(char **argv) {
             fprintf(stderr, "fg: stopped foreground job %ld not found\n", number);
             return 1;
         }
-        return resume_foreground_job(job);
+        (void)resume_foreground_job(job);
+        return 1;
     }
     if (strcmp(argv[0], "kill") == 0) {
         int signal_number = SIGTERM;
