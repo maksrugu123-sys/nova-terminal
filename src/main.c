@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 #ifndef PATH_MAX
@@ -15,9 +18,15 @@
 
 #define NOVA_VERSION "0.2.0-dev"
 #define MAX_ARGS 128
+#define LINE_MAX_SIZE 4096
+#define HISTORY_LIMIT 200
 
 static int use_color = 0;
 static int running = 1;
+static char *history[HISTORY_LIMIT];
+static size_t history_count = 0;
+static struct termios saved_termios;
+static int raw_active = 0;
 
 static const char *C_RESET = "\033[0m";
 static const char *C_BOLD = "\033[1m";
@@ -27,6 +36,7 @@ static const char *C_COMMAND = "\033[38;5;220m";
 static const char *C_OK = "\033[38;5;82m";
 static const char *C_ERROR = "\033[38;5;196m";
 static const char *C_INFO = "\033[38;5;141m";
+static const char *C_HINT = "\033[38;5;244m";
 
 static const char *color(const char *value) {
     return use_color ? value : "";
@@ -36,14 +46,33 @@ static void print_error(const char *message) {
     fprintf(stderr, "%s%s[error]%s %s\n", color(C_BOLD), color(C_ERROR), color(C_RESET), message);
 }
 
+static void restore_terminal(void) {
+    if (raw_active) {
+        (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_termios);
+        raw_active = 0;
+    }
+}
+
+static int enable_raw_terminal(void) {
+    struct termios raw;
+    if (!isatty(STDIN_FILENO) || tcgetattr(STDIN_FILENO, &saved_termios) != 0) return 0;
+    raw = saved_termios;
+    raw.c_lflag &= (tcflag_t) ~(ICANON | ECHO | IEXTEN | ISIG);
+    raw.c_iflag &= (tcflag_t) ~(IXON | ICRNL);
+    raw.c_oflag |= OPOST;
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) return 0;
+    raw_active = 1;
+    return 1;
+}
+
 static void print_prompt(void) {
     char cwd[PATH_MAX];
     const char *home = getenv("HOME");
     const char *shown;
 
-    if (getcwd(cwd, sizeof(cwd)) == NULL) {
-        snprintf(cwd, sizeof(cwd), "?");
-    }
+    if (getcwd(cwd, sizeof(cwd)) == NULL) snprintf(cwd, sizeof(cwd), "?");
     shown = cwd;
     if (home != NULL && home[0] != '\0') {
         size_t home_len = strlen(home);
@@ -62,36 +91,284 @@ static void print_prompt(void) {
     fflush(stdout);
 }
 
+static void redraw_line(const char *prompt_line, size_t length, size_t cursor) {
+    (void)length;
+    fputs("\r\033[2K", stdout);
+    print_prompt();
+    if (prompt_line[0] != '\0') fwrite(prompt_line, 1, strlen(prompt_line), stdout);
+    if (cursor < strlen(prompt_line)) {
+        printf("\033[%zuD", strlen(prompt_line) - cursor);
+    }
+    fflush(stdout);
+}
+
+static const char *history_path(void) {
+    static char path[PATH_MAX];
+    const char *home = getenv("HOME");
+    if (home == NULL || home[0] == '\0') return NULL;
+    if (snprintf(path, sizeof(path), "%s/.nova_history", home) >= (int)sizeof(path)) return NULL;
+    return path;
+}
+
+static void load_history(void) {
+    const char *path = history_path();
+    FILE *file;
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t n;
+    if (path == NULL || (file = fopen(path, "r")) == NULL) return;
+    while ((n = getline(&line, &cap, file)) >= 0) {
+        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
+        if (n == 0) continue;
+        if (history_count == HISTORY_LIMIT) {
+            free(history[0]);
+            memmove(history, history + 1, (HISTORY_LIMIT - 1) * sizeof(history[0]));
+            history_count--;
+        }
+        history[history_count++] = strdup(line);
+    }
+    free(line);
+    fclose(file);
+}
+
+static void add_history(const char *line) {
+    const char *path;
+    FILE *file;
+    size_t len = strlen(line);
+    if (len == 0 || (history_count > 0 && strcmp(history[history_count - 1], line) == 0)) return;
+    if (history_count == HISTORY_LIMIT) {
+        free(history[0]);
+        memmove(history, history + 1, (HISTORY_LIMIT - 1) * sizeof(history[0]));
+        history_count--;
+    }
+    history[history_count] = strdup(line);
+    if (history[history_count] != NULL) history_count++;
+
+    path = history_path();
+    if (path != NULL && (file = fopen(path, "a")) != NULL) {
+        (void)fwrite(line, 1, len, file);
+        (void)fputc('\n', file);
+        fclose(file);
+    }
+}
+
+static int is_builtin_name(const char *name) {
+    static const char *names[] = {"help", "version", "cd", "clear", "exit", "history", NULL};
+    size_t i;
+    for (i = 0; names[i] != NULL; i++) if (strcmp(name, names[i]) == 0) return 1;
+    return 0;
+}
+
+static void complete_path(char *line, size_t *length, size_t *cursor) {
+    size_t start = *cursor;
+    size_t token_start;
+    char token[PATH_MAX];
+    char directory[PATH_MAX];
+    char prefix[PATH_MAX];
+    char candidate[PATH_MAX];
+    const char *slash;
+    const char *base;
+    DIR *dir;
+    struct dirent *entry;
+    char *matches[128];
+    size_t match_count = 0, i, common;
+    int has_slash;
+
+    while (start > 0 && line[start - 1] != ' ' && line[start - 1] != '\t') start--;
+    token_start = start;
+    if (*cursor - token_start >= sizeof(token)) return;
+    memcpy(token, line + token_start, *cursor - token_start);
+    token[*cursor - token_start] = '\0';
+
+    slash = strrchr(token, '/');
+    has_slash = slash != NULL;
+    if (has_slash) {
+        size_t dlen = (size_t)(slash - token);
+        if (dlen == 0) strcpy(directory, "/");
+        else {
+            memcpy(directory, token, dlen);
+            directory[dlen] = '\0';
+        }
+        base = slash + 1;
+    } else {
+        strcpy(directory, ".");
+        base = token;
+    }
+    snprintf(prefix, sizeof(prefix), "%s", base);
+    dir = opendir(directory);
+    if (dir == NULL) return;
+
+    while ((entry = readdir(dir)) != NULL && match_count < 128) {
+        size_t plen = strlen(prefix);
+        if (strncmp(entry->d_name, prefix, plen) != 0) continue;
+        if (entry->d_name[0] == '.' && prefix[0] != '.') continue;
+        matches[match_count] = strdup(entry->d_name);
+        if (matches[match_count] != NULL) match_count++;
+    }
+    closedir(dir);
+    if (match_count == 0) return;
+
+    common = strlen(matches[0]);
+    for (i = 1; i < match_count; i++) {
+        size_t j = 0;
+        while (j < common && matches[i][j] == matches[0][j]) j++;
+        common = j;
+    }
+
+    if (match_count == 1 || common > strlen(prefix)) {
+        size_t old_token_len = *cursor - token_start;
+        size_t replacement_len = (has_slash ? (size_t)(slash - token + 1) : 0) + common;
+        size_t new_len = token_start + replacement_len + (*length - *cursor);
+        if (new_len < LINE_MAX_SIZE) {
+            if (has_slash) memcpy(candidate, token, (size_t)(slash - token + 1));
+            else candidate[0] = '\0';
+            candidate[has_slash ? (size_t)(slash - token + 1) : 0] = '\0';
+            strncat(candidate, matches[0], common);
+            memmove(line + token_start + replacement_len, line + *cursor, *length - *cursor + 1);
+            memcpy(line + token_start, candidate, replacement_len);
+            *length = new_len;
+            *cursor = token_start + replacement_len;
+            if (match_count == 1) {
+                char full[PATH_MAX];
+                struct stat st;
+                if (snprintf(full, sizeof(full), "%s/%s", directory, matches[0]) < (int)sizeof(full) &&
+                    stat(full, &st) == 0 && S_ISDIR(st.st_mode) && *length + 1 < LINE_MAX_SIZE) {
+                    memmove(line + *cursor + 1, line + *cursor, *length - *cursor + 1);
+                    line[(*cursor)++] = '/';
+                    (*length)++;
+                } else if (*length + 1 < LINE_MAX_SIZE) {
+                    memmove(line + *cursor + 1, line + *cursor, *length - *cursor + 1);
+                    line[(*cursor)++] = ' ';
+                    (*length)++;
+                }
+            }
+        }
+        (void)old_token_len;
+    } else {
+        putchar('\n');
+        for (i = 0; i < match_count; i++) {
+            printf("%s%s%s  ", color(C_INFO), matches[i], color(C_RESET));
+        }
+        putchar('\n');
+    }
+    for (i = 0; i < match_count; i++) free(matches[i]);
+}
+
+static ssize_t read_line(char *buffer, size_t capacity) {
+    size_t length = 0, cursor = 0;
+    size_t history_position = history_count;
+    char saved_current[LINE_MAX_SIZE] = "";
+    int raw = enable_raw_terminal();
+
+    buffer[0] = '\0';
+    if (!raw) {
+        if (fgets(buffer, (int)capacity, stdin) == NULL) return -1;
+        return (ssize_t)strlen(buffer);
+    }
+
+    for (;;) {
+        unsigned char c;
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n == 0) { restore_terminal(); return -1; }
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            restore_terminal();
+            return -1;
+        }
+        if (c == '\r' || c == '\n') {
+            buffer[length] = '\0';
+            putchar('\n');
+            restore_terminal();
+            return (ssize_t)length;
+        }
+        if (c == 3) {
+            buffer[0] = '\0';
+            putchar('^'); putchar('C'); putchar('\n');
+            restore_terminal();
+            return 0;
+        }
+        if (c == 4) {
+            if (length == 0) { restore_terminal(); return -1; }
+            continue;
+        }
+        if (c == 127 || c == 8) {
+            if (cursor > 0) {
+                memmove(buffer + cursor - 1, buffer + cursor, length - cursor + 1);
+                cursor--; length--;
+                redraw_line(buffer, length, cursor);
+            }
+            continue;
+        }
+        if (c == 9) {
+            complete_path(buffer, &length, &cursor);
+            redraw_line(buffer, length, cursor);
+            continue;
+        }
+        if (c == 27) {
+            unsigned char seq[2];
+            if (read(STDIN_FILENO, &seq[0], 1) != 1 || read(STDIN_FILENO, &seq[1], 1) != 1 || seq[0] != '[') continue;
+            if (seq[1] == 'A') {
+                if (history_position > 0) {
+                    if (history_position == history_count) snprintf(saved_current, sizeof(saved_current), "%s", buffer);
+                    history_position--;
+                    snprintf(buffer, capacity, "%s", history[history_position]);
+                    length = cursor = strlen(buffer);
+                    redraw_line(buffer, length, cursor);
+                }
+            } else if (seq[1] == 'B') {
+                if (history_position < history_count) {
+                    history_position++;
+                    snprintf(buffer, capacity, "%s", history_position == history_count ? saved_current : history[history_position]);
+                    length = cursor = strlen(buffer);
+                    redraw_line(buffer, length, cursor);
+                }
+            } else if (seq[1] == 'C' && cursor < length) {
+                cursor++;
+                fputs("\033[C", stdout);
+                fflush(stdout);
+            } else if (seq[1] == 'D' && cursor > 0) {
+                cursor--;
+                fputs("\033[D", stdout);
+                fflush(stdout);
+            }
+            continue;
+        }
+        if (c >= 32 && c < 127 && length + 1 < capacity) {
+            memmove(buffer + cursor + 1, buffer + cursor, length - cursor + 1);
+            buffer[cursor++] = (char)c;
+            length++;
+            redraw_line(buffer, length, cursor);
+        }
+    }
+}
+
 static void print_help(void) {
     puts("NOVA Terminal " NOVA_VERSION " — built-in commands:");
     printf("  %shelp%s       Show this help\n", color(C_COMMAND), color(C_RESET));
     printf("  %sversion%s    Show version\n", color(C_COMMAND), color(C_RESET));
     printf("  %scd [DIR]%s   Change working directory\n", color(C_COMMAND), color(C_RESET));
     printf("  %sclear%s      Clear the terminal\n", color(C_COMMAND), color(C_RESET));
+    printf("  %shistory%s    Show recent command history\n", color(C_COMMAND), color(C_RESET));
     printf("  %sexit%s       Exit NOVA Terminal\n", color(C_COMMAND), color(C_RESET));
+    puts("Tab completes filesystem paths; Up/Down browse saved history.");
     puts("Other commands are searched for in PATH and launched as external programs.");
-    puts("Note: pipelines, redirection, shell quoting and job control are not implemented yet.");
+    puts("Pipelines, redirection, shell quoting and job control are not implemented yet.");
 }
 
 static int run_builtin(char **argv) {
     if (argv[0] == NULL) return 1;
-
-    if (strcmp(argv[0], "help") == 0) {
-        print_help();
-        return 1;
-    }
+    if (strcmp(argv[0], "help") == 0) { print_help(); return 1; }
     if (strcmp(argv[0], "version") == 0) {
         printf("%sNOVA Terminal %s%s\n", color(C_OK), NOVA_VERSION, color(C_RESET));
         return 1;
     }
-    if (strcmp(argv[0], "clear") == 0) {
-        fputs("\033[2J\033[H", stdout);
+    if (strcmp(argv[0], "clear") == 0) { fputs("\033[2J\033[H", stdout); return 1; }
+    if (strcmp(argv[0], "history") == 0) {
+        size_t i;
+        for (i = 0; i < history_count; i++) printf("%s%3zu%s  %s\n", color(C_HINT), i + 1, color(C_RESET), history[i]);
         return 1;
     }
-    if (strcmp(argv[0], "exit") == 0) {
-        running = 0;
-        return 1;
-    }
+    if (strcmp(argv[0], "exit") == 0) { running = 0; return 1; }
     if (strcmp(argv[0], "cd") == 0) {
         const char *target = argv[1];
         if (target == NULL || strcmp(target, "~") == 0) target = getenv("HOME");
@@ -107,10 +384,7 @@ static int run_builtin(char **argv) {
 
 static void run_external(char **argv) {
     pid_t pid = fork();
-    if (pid < 0) {
-        print_error(strerror(errno));
-        return;
-    }
+    if (pid < 0) { print_error(strerror(errno)); return; }
     if (pid == 0) {
         execvp(argv[0], argv);
         fprintf(stderr, "%snova: %s: %s%s\n", color(C_ERROR), argv[0], strerror(errno), color(C_RESET));
@@ -120,10 +394,7 @@ static void run_external(char **argv) {
         int status;
         pid_t result = waitpid(pid, &status, 0);
         if (result >= 0) break;
-        if (errno != EINTR) {
-            print_error("could not wait for child process");
-            break;
-        }
+        if (errno != EINTR) { print_error("could not wait for child process"); break; }
     }
 }
 
@@ -140,35 +411,32 @@ static size_t split_args(char *line, char **argv) {
 }
 
 int main(void) {
-    char *line = NULL;
-    size_t capacity = 0;
-    ssize_t length;
+    char line[LINE_MAX_SIZE];
     const char *no_color = getenv("NO_COLOR");
     use_color = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) && (no_color == NULL || no_color[0] == '\0');
+    (void)signal(SIGPIPE, SIG_IGN);
+    load_history();
 
     printf("%sNOVA Terminal %s%s\n", color(C_BOLD), NOVA_VERSION, color(C_RESET));
     printf("%sHybrid command environment for Termux.%s\n", color(C_INFO), color(C_RESET));
     puts("Type 'help' for commands. This is not a POSIX shell yet.");
 
     while (running) {
+        char original[LINE_MAX_SIZE];
         char *argv[MAX_ARGS];
+        ssize_t length;
         print_prompt();
-        length = getline(&line, &capacity, stdin);
-        if (length < 0) {
-            if (feof(stdin)) break;
-            if (errno == EINTR) {
-                clearerr(stdin);
-                putchar('\n');
-                continue;
-            }
-            print_error("failed to read command");
-            break;
-        }
+        length = read_line(line, sizeof(line));
+        if (length < 0) break;
+        if (length == 0) continue;
+        snprintf(original, sizeof(original), "%s", line);
+        add_history(original);
         if (split_args(line, argv) == 0) continue;
         if (!run_builtin(argv)) run_external(argv);
     }
 
-    free(line);
+    restore_terminal();
+    for (size_t i = 0; i < history_count; i++) free(history[i]);
     puts("NOVA Terminal closed.");
     return 0;
 }
