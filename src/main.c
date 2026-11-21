@@ -25,7 +25,6 @@ static const char *C_PROMPT = "\033[38;5;45m";
 static const char *C_PATH = "\033[38;5;111m";
 static const char *C_COMMAND = "\033[38;5;220m";
 static const char *C_OK = "\033[38;5;82m";
-static const char *C_WARN = "\033[38;5;214m";
 static const char *C_ERROR = "\033[38;5;196m";
 static const char *C_INFO = "\033[38;5;141m";
 
@@ -58,7 +57,7 @@ static void print_prompt(void) {
         }
     }
 
-    printf("%s%sNOVA%s %s%s%s\n%s❯ %s", color(C_BOLD), color(C_PROMPT), color(C_RESET),
+    printf("%s%sNOVA%s %s%s%s %s❯ %s", color(C_BOLD), color(C_PROMPT), color(C_RESET),
            color(C_PATH), shown, color(C_RESET), color(C_COMMAND), color(C_RESET));
     fflush(stdout);
 }
