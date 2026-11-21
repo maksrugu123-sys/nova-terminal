@@ -8,7 +8,7 @@ PREFIX := /usr/local
 endif
 BINDIR := $(PREFIX)/bin
 TARGET := nova
-SOURCES := src/main.c src/editor.c
+SOURCES := src/main.c src/editor.c src/shell_features.c
 
 .PHONY: all clean install uninstall
 all: $(TARGET)
