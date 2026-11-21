@@ -53,11 +53,14 @@ make install
 - Environment commands: `export NAME=VALUE`, `unset NAME`, and `env`.
 - Simple `$NAME` and `${NAME}` expansion in command arguments.
 - Session-local aliases with `alias NAME=COMMAND` and `unalias NAME`.
+- Background external commands with `command &`, plus `jobs`, `wait`, and `kill PID`.
+- Foreground stop/resume with Ctrl+Z and `fg JOB_ID`; Ctrl+C interrupts a foreground child.
+- `ps` remains an external system utility (when provided by Termux).
 - Tests and clear documentation of supported behavior.
 
 ## Design boundary
 
-NOVA Terminal is a command environment, not a replacement for a POSIX shell yet. Shell features such as pipelines, redirection, quoting rules and job control must not be assumed unless explicitly implemented and tested.
+NOVA Terminal is a command environment, not a replacement for a POSIX shell yet. NOVA has basic process tracking, but not full POSIX job control, pipelines, redirection, or shell quoting. Background jobs receive `/dev/null` as stdin; `fg` resumes only jobs stopped from the foreground.
 
 ## License
 
