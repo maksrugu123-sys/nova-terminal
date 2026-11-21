@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include "editor.h"
 #include "shell_features.h"
+#include "process_manager.h"
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -482,6 +483,10 @@ static void print_help(void) {
     printf("  %senv%s         List environment variables\n", color(C_COMMAND), color(C_RESET));
     printf("  %salias%s       List or define command aliases\n", color(C_COMMAND), color(C_RESET));
     printf("  %sunalias NAME%s Remove an alias\n", color(C_COMMAND), color(C_RESET));
+    printf("  %sjobs%s       List background jobs\n", color(C_COMMAND), color(C_RESET));
+    printf("  %swait [ID]%s  Wait for background jobs\n", color(C_COMMAND), color(C_RESET));
+    printf("  %skill PID%s   Send SIGTERM to a managed job\n", color(C_COMMAND), color(C_RESET));
+    puts("Use 'command &' to start a background process; use 'ps' to inspect processes.");
     printf("  %sedit FILE%s  Open the lightweight line editor\n", color(C_COMMAND), color(C_RESET));
     printf("  %sworkspace%s  Manage a NOVA workspace\n", color(C_COMMAND), color(C_RESET));
     printf("  %skernel%s     Manage kernel project scaffolding\n", color(C_COMMAND), color(C_RESET));
@@ -583,12 +588,31 @@ int main(void) {
         snprintf(original, sizeof(original), "%s", line);
         add_history(original);
         nova_shell_expand_alias(line, sizeof(line));
-        if (split_args(line, argv) == 0) continue;
-        nova_shell_expand_variables(argv);
-        if (!run_builtin(argv) && !nova_shell_builtin(argv)) run_external(argv);
+        {
+            size_t argc = split_args(line, argv);
+            int background = 0;
+            int handled;
+            if (argc == 0) continue;
+            nova_shell_expand_variables(argv);
+            if (argc > 1 && strcmp(argv[argc - 1], "&") == 0) {
+                background = 1;
+                argv[--argc] = NULL;
+            }
+            handled = run_builtin(argv);
+            if (!handled) handled = nova_shell_builtin(argv);
+            if (!handled) handled = nova_process_builtin(argv);
+            if (handled) {
+                if (background) print_error("built-in commands cannot run in the background");
+                continue;
+            }
+            if (!background) restore_terminal();
+            (void)nova_process_run(argv, background, original);
+            if (!background) (void)enable_raw_terminal();
+        }
     }
 
     restore_terminal();
+    nova_process_shutdown();
     for (size_t i = 0; i < history_count; i++) free(history[i]);
     puts("NOVA Terminal closed.");
     return 0;
