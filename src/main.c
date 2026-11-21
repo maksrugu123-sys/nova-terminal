@@ -594,6 +594,16 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
     struct sigaction old_int, old_tstp, ignore_action, default_action;
     size_t i;
     if (count == 0 || count > NOVA_PIPELINE_LIMIT) return 2;
+    if (count > 1) {
+        for (i = 0; i < count; i++) {
+            const char *name = cmds[i].argv[0];
+            if (strcmp(name, "jobs") == 0 || strcmp(name, "wait") == 0 ||
+                strcmp(name, "fg") == 0 || strcmp(name, "kill") == 0) {
+                fprintf(stderr, "nova: process-control command '%s' cannot run in a pipeline\\n", name);
+                return 2;
+            }
+        }
+    }
     if (background && count > 1) {
         fputs("nova: background pipelines are not supported yet\n", stderr);
         return 2;
