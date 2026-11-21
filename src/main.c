@@ -155,13 +155,6 @@ static void add_history(const char *line) {
     }
 }
 
-static int is_builtin_name(const char *name) {
-    static const char *names[] = {"help", "version", "cd", "clear", "exit", "history", NULL};
-    size_t i;
-    for (i = 0; names[i] != NULL; i++) if (strcmp(name, names[i]) == 0) return 1;
-    return 0;
-}
-
 static void complete_path(char *line, size_t *length, size_t *cursor) {
     size_t start = *cursor;
     size_t token_start;
