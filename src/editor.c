@@ -36,7 +36,7 @@ static int reserve(Buffer *b, size_t wanted) {
 }
 
 static int insert_line(Buffer *b, size_t index, const char *text) {
-    char **copy;
+    char *copy;
     if (index > b->count || !reserve(b, b->count + 1)) return 0;
     copy = strdup(text);
     if (copy == NULL) return 0;
