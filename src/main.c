@@ -12,6 +12,8 @@
 #include "editor.h"
 #include "shell_features.h"
 #include "process_manager.h"
+#include "parser.h"
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -493,7 +495,7 @@ static void print_help(void) {
     printf("  %sexit%s       Exit NOVA Terminal\n", color(C_COMMAND), color(C_RESET));
     puts("Tab completes filesystem paths; Up/Down browse saved history.");
     puts("Other commands are searched for in PATH and launched as external programs.");
-    printf("%sNote:%s pipelines, redirection, shell quoting and job control are not implemented yet.\\n",
+    printf("%sNote:%s full POSIX shell syntax and terminal job control are not implemented.\\n",
            color(C_WARN), color(C_RESET));
 }
 
@@ -550,6 +552,191 @@ static size_t split_args(char *line, char **argv) {
     return count;
 }
 
+
+
+#define NOVA_PIPELINE_LIMIT 16
+
+typedef struct {
+    char *argv[MAX_ARGS];
+    const char *input;
+    const char *output;
+    int append;
+} NovaExecCommand;
+
+static int command_status(int status) {
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+}
+
+static int apply_redirections(const NovaExecCommand *cmd) {
+    int fd;
+    if (cmd->input != NULL) {
+        fd = open(cmd->input, O_RDONLY);
+        if (fd < 0) { perror(cmd->input); return 0; }
+        if (dup2(fd, STDIN_FILENO) < 0) { perror("dup2"); close(fd); return 0; }
+        close(fd);
+    }
+    if (cmd->output != NULL) {
+        fd = open(cmd->output, O_WRONLY | O_CREAT | (cmd->append ? O_APPEND : O_TRUNC), 0666);
+        if (fd < 0) { perror(cmd->output); return 0; }
+        if (dup2(fd, STDOUT_FILENO) < 0) { perror("dup2"); close(fd); return 0; }
+        close(fd);
+    }
+    return 1;
+}
+
+static int execute_pipeline(NovaExecCommand *cmds, size_t count, int background,
+                            const char *original) {
+    pid_t pids[NOVA_PIPELINE_LIMIT];
+    int previous = -1;
+    size_t i;
+    int last_status = 0;
+    if (count == 0 || count > NOVA_PIPELINE_LIMIT) return 2;
+
+    if (count == 1 && !background) {
+        int saved_in = -1, saved_out = -1, result = 0;
+        int has_redir = cmds[0].input != NULL || cmds[0].output != NULL;
+        if (has_redir) {
+            fflush(NULL);
+            saved_in = dup(STDIN_FILENO); saved_out = dup(STDOUT_FILENO);
+            if (saved_in < 0 || saved_out < 0 || !apply_redirections(&cmds[0])) {
+                if (saved_in >= 0) { dup2(saved_in, STDIN_FILENO); close(saved_in); }
+                if (saved_out >= 0) { dup2(saved_out, STDOUT_FILENO); close(saved_out); }
+                return 1;
+            }
+        }
+        result = run_builtin(cmds[0].argv);
+        if (!result) result = nova_shell_builtin(cmds[0].argv);
+        if (!result) result = nova_process_builtin(cmds[0].argv);
+        if (result) last_status = 0;
+        else {
+            /* A redirection on an external command is handled by the child path below. */
+            if (has_redir) {
+                fflush(NULL);
+                dup2(saved_in, STDIN_FILENO); dup2(saved_out, STDOUT_FILENO);
+                close(saved_in); close(saved_out);
+                saved_in = saved_out = -1;
+            }
+            return nova_process_run(cmds[0].argv, 0, original);
+        }
+        fflush(NULL);
+        if (has_redir) {
+            dup2(saved_in, STDIN_FILENO); dup2(saved_out, STDOUT_FILENO);
+            close(saved_in); close(saved_out);
+        }
+        return last_status;
+    }
+
+    if (background && count == 1) {
+        if (cmds[0].input != NULL || cmds[0].output != NULL) {
+            fputs("nova: background redirection is not supported yet\n", stderr);
+            return 2;
+        }
+        return nova_process_run(cmds[0].argv, 1, original);
+    }
+
+    for (i = 0; i < count; i++) {
+        int fds[2] = {-1, -1};
+        pid_t pid;
+        if (i + 1 < count && pipe(fds) != 0) {
+            perror("nova: pipe");
+            if (previous >= 0) close(previous);
+            return 1;
+        }
+        pid = fork();
+        if (pid < 0) {
+            perror("nova: fork");
+            if (previous >= 0) close(previous);
+            if (fds[0] >= 0) close(fds[0]);
+            if (fds[1] >= 0) close(fds[1]);
+            return 1;
+        }
+        if (pid == 0) {
+            if (previous >= 0) { dup2(previous, STDIN_FILENO); close(previous); }
+            if (fds[1] >= 0) { dup2(fds[1], STDOUT_FILENO); close(fds[1]); }
+            if (fds[0] >= 0) close(fds[0]);
+            if (!apply_redirections(&cmds[i])) _exit(1);
+            if (cmds[i].argv[0] == NULL) _exit(0);
+            execvp(cmds[i].argv[0], cmds[i].argv);
+            fprintf(stderr, "nova: %s: %s\n", cmds[i].argv[0], strerror(errno));
+            _exit(errno == ENOENT ? 127 : 126);
+        }
+        pids[i] = pid;
+        if (previous >= 0) close(previous);
+        if (fds[1] >= 0) close(fds[1]);
+        previous = fds[0];
+    }
+    if (previous >= 0) close(previous);
+    for (i = 0; i < count; i++) {
+        int status;
+        pid_t waited;
+        do { waited = waitpid(pids[i], &status, 0); } while (waited < 0 && errno == EINTR);
+        if (waited < 0) { perror("nova: waitpid"); last_status = 1; }
+        else if (i + 1 == count) last_status = command_status(status);
+    }
+    return last_status;
+}
+
+/* Execute lexed tokens; stateful NOVA built-ins remain parent-only and standalone. */
+static int execute_line(const char *line, const char *original) {
+    NovaToken tokens[NOVA_TOKEN_LIMIT];
+    NovaExecCommand commands[NOVA_PIPELINE_LIMIT];
+    char error[160];
+    int n = nova_lex(line, tokens, NOVA_TOKEN_LIMIT, error, sizeof(error));
+    int i = 0, status = 0, have_pipeline = 0, background = 0;
+    int next_condition = 0; /* 0=always, 1=on success, 2=on failure */
+    if (n < 0) { fprintf(stderr, "nova: parse: %s\n", error); return 2; }
+    if (n == 0) return 0;
+
+    while (i < n) {
+        size_t count = 0;
+        int skip;
+        memset(commands, 0, sizeof(commands));
+        for (;;) {
+            NovaExecCommand *cmd;
+            size_t argc = 0;
+            if (count == NOVA_PIPELINE_LIMIT) { fputs("nova: pipeline is too long\n", stderr); return 2; }
+            cmd = &commands[count++];
+            while (i < n && tokens[i].type != NOVA_TOK_PIPE &&
+                   tokens[i].type != NOVA_TOK_AND_IF && tokens[i].type != NOVA_TOK_OR_IF &&
+                   tokens[i].type != NOVA_TOK_BACKGROUND) {
+                NovaTokenType type = tokens[i].type;
+                if (type == NOVA_TOK_WORD) {
+                    if (argc + 1 >= MAX_ARGS) { fputs("nova: too many arguments\n", stderr); return 2; }
+                    cmd->argv[argc++] = tokens[i].text;
+                    i++;
+                } else if (type == NOVA_TOK_REDIRECT_IN || type == NOVA_TOK_REDIRECT_OUT ||
+                           type == NOVA_TOK_REDIRECT_APPEND) {
+                    int redirect = (int)type;
+                    i++;
+                    if (i >= n || tokens[i].type != NOVA_TOK_WORD) {
+                        fputs("nova: redirection requires a file name\n", stderr); return 2;
+                    }
+                    if (redirect == NOVA_TOK_REDIRECT_IN) cmd->input = tokens[i].text;
+                    else { cmd->output = tokens[i].text; cmd->append = redirect == NOVA_TOK_REDIRECT_APPEND; }
+                    i++;
+                } else { fputs("nova: unexpected token\n", stderr); return 2; }
+            }
+            cmd->argv[argc] = NULL;
+            if (argc == 0) { fputs("nova: empty command in pipeline\n", stderr); return 2; }
+            if (i < n && tokens[i].type == NOVA_TOK_PIPE) { i++; continue; }
+            break;
+        }
+        if (i < n && tokens[i].type == NOVA_TOK_BACKGROUND) { background = 1; i++; }
+        skip = (next_condition == 1 && status != 0) || (next_condition == 2 && status == 0);
+        if (!skip) status = execute_pipeline(commands, count, background, original);
+        background = 0;
+        if (i >= n) break;
+        if (tokens[i].type == NOVA_TOK_AND_IF) next_condition = 1;
+        else if (tokens[i].type == NOVA_TOK_OR_IF) next_condition = 2;
+        else { fputs("nova: unexpected operator\n", stderr); return 2; }
+        i++;
+        if (i >= n) { fputs("nova: missing command after conditional operator\n", stderr); return 2; }
+    }
+    return status;
+}
+
 int main(void) {
     char line[LINE_MAX_SIZE];
     const char *no_color = getenv("NO_COLOR");
@@ -563,7 +750,6 @@ int main(void) {
 
     while (running) {
         char original[LINE_MAX_SIZE];
-        char *argv[MAX_ARGS];
         ssize_t length;
         print_prompt();
         length = read_line(line, sizeof(line));
@@ -572,29 +758,9 @@ int main(void) {
         snprintf(original, sizeof(original), "%s", line);
         add_history(original);
         nova_shell_expand_alias(line, sizeof(line));
-        {
-            size_t argc = split_args(line, argv);
-            int background = 0;
-            int handled;
-            if (argc == 0) continue;
-            nova_shell_expand_variables(argv);
-            if (argc > 1 && strcmp(argv[argc - 1], "&") == 0) {
-                background = 1;
-                argv[--argc] = NULL;
-            }
-            handled = run_builtin(argv);
-            if (!handled) handled = nova_shell_builtin(argv);
-            if (!handled && !background && strcmp(argv[0], "fg") == 0) restore_terminal();
-            if (!handled) handled = nova_process_builtin(argv);
-            if (!background && strcmp(argv[0], "fg") == 0) (void)enable_raw_terminal();
-            if (handled) {
-                if (background) print_error("built-in commands cannot run in the background");
-                continue;
-            }
-            if (!background) restore_terminal();
-            (void)nova_process_run(argv, background, original);
-            if (!background) (void)enable_raw_terminal();
-        }
+        restore_terminal();
+        (void)execute_line(line, original);
+        (void)enable_raw_terminal();
     }
 
     restore_terminal();
