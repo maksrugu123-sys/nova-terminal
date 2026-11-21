@@ -16,4 +16,4 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
       - name: Build with GCC
-        run: make clean all CC=gcc
+        run: make clean all test CC=gcc
