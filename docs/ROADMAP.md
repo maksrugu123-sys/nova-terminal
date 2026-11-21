@@ -6,9 +6,9 @@
 - [x] Colored prompt and categorized status/error output
 - [x] Built-ins: `help`, `version`, `cd`, `clear`, `exit`
 - [x] Launch external programs with `fork`/`execvp`
-- [ ] Interactive history with Up/Down and persistent `~/.nova_history`
-- [ ] Cursor movement, Backspace, Ctrl-C and Ctrl-D handling
-- [ ] Tab completion for commands and filesystem paths
+- [x] Interactive history with Up/Down and persistent `~/.nova_history`
+- [x] Cursor movement, Backspace, Ctrl-C and Ctrl-D handling
+- [x] Tab completion for filesystem paths (command-name completion remains planned)
 - [ ] Simple line-oriented `edit` utility
 - [ ] `workspace init` and `workspace info`
 - [ ] `kernel status` and `kernel init`
