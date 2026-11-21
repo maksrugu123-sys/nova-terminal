@@ -1826,26 +1826,42 @@ static Alias *find_alias(const char *name) {
 }
 
 static void alias_command(char **argv) {
-    size_t i;
+    char definition[ALIAS_VALUE_LIMIT + ALIAS_NAME_LIMIT + 2];
+    size_t used = 0, i, name_len;
+    char *equals;
+    char name[ALIAS_NAME_LIMIT];
+    Alias *item;
+
     if (argv[1] == NULL) {
         for (i = 0; i < alias_count; i++) printf("alias %s=%s\n", aliases[i].name, aliases[i].value);
         return;
     }
-    char *equals = strchr(argv[1], '=');
-    if (equals == NULL || equals == argv[1]) {
+    definition[0] = '\0';
+    for (i = 1; argv[i] != NULL; i++) {
+        size_t n = strlen(argv[i]);
+        if (used + n + (i > 1 ? 1U : 0U) >= sizeof(definition)) {
+            puts("alias: definition is too long");
+            return;
+        }
+        if (i > 1) definition[used++] = ' ';
+        memcpy(definition + used, argv[i], n);
+        used += n;
+    }
+    definition[used] = '\0';
+    equals = strchr(definition, '=');
+    if (equals == NULL || equals == definition) {
         puts("Usage: alias NAME=COMMAND");
         return;
     }
-    size_t name_len = (size_t)(equals - argv[1]);
-    if (name_len >= ALIAS_NAME_LIMIT || equals[1] == '\0') {
+    name_len = (size_t)(equals - definition);
+    if (name_len >= sizeof(name) || equals[1] == '\0') {
         puts("alias: invalid name or empty command");
         return;
     }
-    char name[ALIAS_NAME_LIMIT];
-    memcpy(name, argv[1], name_len);
+    memcpy(name, definition, name_len);
     name[name_len] = '\0';
     if (!valid_env_name(name)) { puts("alias: invalid alias name"); return; }
-    Alias *item = find_alias(name);
+    item = find_alias(name);
     if (item == NULL) {
         if (alias_count == ALIAS_LIMIT) { puts("alias: alias table is full"); return; }
         item = &aliases[alias_count++];
@@ -1854,7 +1870,6 @@ static void alias_command(char **argv) {
     if (strlen(equals + 1) >= sizeof(item->value)) { puts("alias: command is too long"); return; }
     snprintf(item->value, sizeof(item->value), "%s", equals + 1);
 }
-
 static void unalias_command(char **argv) {
     size_t i;
     if (argv[1] == NULL) { puts("Usage: unalias NAME"); return; }
