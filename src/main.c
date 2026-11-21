@@ -587,11 +587,29 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
         return 2;
     }
 
-    if (count == 1 && !background &&
-        cmds[0].input == NULL && cmds[0].output == NULL) {
-        int handled = run_builtin(cmds[0].argv);
+    if (count == 1 && !background) {
+        int saved_in = -1, saved_out = -1, handled = 0;
+        int redirected = cmds[0].input != NULL || cmds[0].output != NULL;
+        if (redirected) {
+            fflush(NULL);
+            saved_in = dup(STDIN_FILENO);
+            saved_out = dup(STDOUT_FILENO);
+            if (saved_in < 0 || saved_out < 0 || !nova_apply_redirects(&cmds[0])) {
+                if (saved_in >= 0) { (void)dup2(saved_in, STDIN_FILENO); close(saved_in); }
+                if (saved_out >= 0) { (void)dup2(saved_out, STDOUT_FILENO); close(saved_out); }
+                return 1;
+            }
+        }
+        handled = run_builtin(cmds[0].argv);
         if (!handled) handled = nova_shell_builtin(cmds[0].argv);
         if (!handled) handled = nova_process_builtin(cmds[0].argv);
+        fflush(NULL);
+        if (redirected) {
+            (void)dup2(saved_in, STDIN_FILENO);
+            (void)dup2(saved_out, STDOUT_FILENO);
+            close(saved_in);
+            close(saved_out);
+        }
         if (handled) return 0;
         return nova_process_run(cmds[0].argv, 0, original);
     }
@@ -639,6 +657,14 @@ static int nova_execute_pipeline(NovaExecCommand *cmds, size_t count,
             if (fds[1] >= 0) { (void)dup2(fds[1], STDOUT_FILENO); close(fds[1]); }
             if (fds[0] >= 0) close(fds[0]);
             if (!nova_apply_redirects(&cmds[i])) _exit(1);
+            {
+                int handled = run_builtin(cmds[i].argv);
+                if (!handled) handled = nova_shell_builtin(cmds[i].argv);
+                if (handled) {
+                    fflush(NULL);
+                    _exit(0);
+                }
+            }
             execvp(cmds[i].argv[0], cmds[i].argv);
             fprintf(stderr, "nova: %s: %s\n", cmds[i].argv[0], strerror(errno));
             _exit(errno == ENOENT ? 127 : 126);
